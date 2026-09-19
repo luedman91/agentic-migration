@@ -1,0 +1,6 @@
+{
+  "name": "QuantLib to Torch Translator",
+  "description": "A universal mathematical and simulation library migration platform with dependency DAG transpilation, deterministic symbol registry, and hybrid agentic verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

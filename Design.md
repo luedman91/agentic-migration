@@ -80,8 +80,9 @@ The **Graph based agentic migration engine** is an enterprise-grade automated tr
 - **One-Click Export:** Bundles the entire package into a valid `.zip` archive for immediate `pip install -e .` installation.
 - **Defensive Error Handling:** Built with internal error boundaries, preventing white screens under all conditions.
 
-### 7. Centralized Configuration & Observability Engine (`src/config/`, `server/config.ts`, `server/logger.ts`, `src/utils/logger.ts`)
+### 7. Centralized Configuration & Observability Engine (`src/config/`, `server/config.ts`, `server/viteDev.ts`, `server/logger.ts`, `src/utils/logger.ts`)
 - **Central Config:** Single source of truth for AI model versions, hardware options, default precisions, and network endpoints.
+- **Shared Vite HMR:** `getViteWsConfig` binds the Vite 8 `server.ws` websocket to the Express HTTP server so `npm run dev` does not open Vite's default port 24678.
 - **Central Logger:** Structured logging of all function calls at INFO level and all GenAI transactions with parameter transparency.
 
 ### 8. Canonical Symbol Aliasing & Cross-Framework Normalization (`src/config/appConfig.ts`, `server/agent.ts`, `server/modalEngine.ts`)

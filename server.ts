@@ -16,10 +16,12 @@
  * ============================================================================
  */
 
+import { createServer as createHttpServer } from "node:http";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { SERVER_CONFIG } from "./server/config";
+import { getViteWatchConfig, getViteWsConfig, isHmrDisabled } from "./server/viteDev";
 import {
   getBuildingBlocks,
   addBuildingBlock,
@@ -38,6 +40,7 @@ async function startServer(): Promise<void> {
   logFunctionCall("server", "startServer", { port: SERVER_CONFIG.PORT, host: SERVER_CONFIG.HOST });
 
   const app = express();
+  const httpServer = createHttpServer(app);
   const PORT = SERVER_CONFIG.PORT;
 
   app.use(express.json({ limit: SERVER_CONFIG.BODY_LIMIT }));
@@ -236,7 +239,12 @@ async function startServer(): Promise<void> {
   // Vite middleware in dev; static files in prod
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: { server: httpServer },
+        hmr: isHmrDisabled() ? false : undefined,
+        ws: getViteWsConfig(httpServer),
+        watch: getViteWatchConfig(),
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -248,8 +256,9 @@ async function startServer(): Promise<void> {
     });
   }
 
-  app.listen(PORT, SERVER_CONFIG.HOST, () => {
-    console.log(`Server running on http://${SERVER_CONFIG.HOST}:${PORT}`);
+  httpServer.listen(PORT, SERVER_CONFIG.HOST, () => {
+    console.log(`Localhost: http://localhost:${PORT}`);
+    console.log(`Listening on ${SERVER_CONFIG.HOST}:${PORT}`);
   });
 }
 

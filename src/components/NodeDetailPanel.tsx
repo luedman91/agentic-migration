@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Node, NodeStatus, UnitTestResult } from '../types';
+import { areSymbolsEquivalent } from '../config/appConfig';
 import {
   X,
   Code2,
@@ -53,8 +54,8 @@ export default function NodeDetailPanel({
   const nodeTests = unitTests.filter(
     (t) =>
       t.targetNodeId === node.id ||
-      t.targetSymbol === node.ql_symbol ||
-      t.integrationModules?.includes(node.ql_symbol)
+      areSymbolsEquivalent(t.targetSymbol, node.ql_symbol) ||
+      t.integrationModules?.some((m) => areSymbolsEquivalent(m, node.ql_symbol))
   );
 
   const copyCode = (text: string, type: 'cpp' | 'python') => {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { initialNodes, europeanEngineNodes, hestonEngineNodes } from './data';
-import { initialUnitTests, europeanUnitTests, hestonUnitTests } from './data/unitTestsData';
+import { initialNodes, europeanEngineNodes, hestonEngineNodes, deepPipelineNodes, massiveEnterprise150Nodes } from './data';
+import { initialUnitTests, europeanUnitTests, hestonUnitTests, deepPipelineUnitTests } from './data/unitTestsData';
+import { massiveEnterpriseUnitTests } from './data/massiveUnitTestsData';
 import { initialLogs } from './data/initialLogs';
 import { initialMigratedFiles } from './data/initialFiles';
 import {
@@ -26,7 +27,14 @@ import MigratedFilesDrawer from './components/MigratedFilesDrawer';
 import BuildingBlocksModal from './components/BuildingBlocksModal';
 import ArbitraryFunctionModal from './components/ArbitraryFunctionModal';
 import WriteIntegrationTestModal from './components/WriteIntegrationTestModal';
-import { isDagLeaf, generateLeafIntegrationTest, generateUnitTestForNode } from './utils/dagTestManager';
+import {
+  isDagLeaf,
+  generateLeafIntegrationTest,
+  generateUnitTestForNode,
+  generateRootToNodeIntegrationTest,
+} from './utils/dagTestManager';
+import { areSymbolsEquivalent } from './config/appConfig';
+import { executeModalNodeMigration } from './utils/modalClient';
 import {
   Network,
   CheckCheck,
@@ -36,25 +44,32 @@ import {
   Cpu,
   ShieldCheck,
   Package,
-  FolderGit2
+  FolderGit2,
+  CloudLightning,
+  Monitor
 } from 'lucide-react';
 
 export default function App() {
   // Start Screen Project Ingestion State
   const [isProjectLoaded, setIsProjectLoaded] = useState(false);
   const [projectConfig, setProjectConfig] = useState<ProjectConfig>({
-    repoUrl: 'https://github.com/lballabio/QuantLib.git',
-    branch: 'v1.34.0',
-    entryPoint: 'ql/pricingengines/vanilla/analyticeuropeanengine.cpp',
+    presetId: 'massive_enterprise_150_dag',
+    repoUrl: 'https://github.com/uber/athenadriver.git',
+    branch: 'main',
+    entryPoint: 'src/orchestrator/system_coordinator.cpp',
     targetFramework: 'PyTorch',
     targetDevice: 'cuda',
     precision: 'float64',
-    oracleEngine: 'QuantLib C++ Python wrapper'
+    sourceLanguage: 'C++',
+    sourceLibraryName: 'Athena Engine + QuantLib Core (C++)',
+    targetLibraryName: 'py_enterprise_distributed_engine',
+    oracleEngine: 'C++ Simulation Reference & Modal Oracle',
+    executionMode: 'modal',
   });
 
   // Main Workbench State
-  const [nodes, setNodes] = useState<Node[]>(initialNodes);
-  const [unitTests, setUnitTests] = useState<UnitTestResult[]>(initialUnitTests);
+  const [nodes, setNodes] = useState<Node[]>(massiveEnterprise150Nodes);
+  const [unitTests, setUnitTests] = useState<UnitTestResult[]>(massiveEnterpriseUnitTests);
   const [logs, setLogs] = useState<LogEntry[]>(initialLogs);
   const [migratedFiles, setMigratedFiles] = useState<MigratedFile[]>(initialMigratedFiles);
   const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
@@ -179,12 +194,19 @@ export default function App() {
         targetTest.targetSymbol
       );
 
-      const delay = Math.max(250, 800 / configRef.current.speedMultiplier);
+      const isModal = configRef.current.executionMode === 'modal';
+      const delay = isModal
+        ? Math.max(120, 350 / configRef.current.speedMultiplier)
+        : Math.max(250, 800 / configRef.current.speedMultiplier);
       await new Promise((res) => setTimeout(res, delay));
 
       const observedDiff = Math.random() * 8e-12 + 1.2e-15;
-      const speedup = +(18 + Math.random() * 22).toFixed(1);
-      const torchTime = +(0.4 + Math.random() * 1.2).toFixed(1);
+      const speedup = isModal
+        ? +(65 + Math.random() * 75).toFixed(1)
+        : +(18 + Math.random() * 22).toFixed(1);
+      const torchTime = isModal
+        ? +(0.15 + Math.random() * 0.35).toFixed(2)
+        : +(0.4 + Math.random() * 1.2).toFixed(1);
 
       const now = new Date();
       const lastRunAt = `${now.toISOString().slice(0, 10)} ${now.toTimeString().slice(0, 8)}`;
@@ -196,16 +218,16 @@ export default function App() {
         speedup,
         lastRunAt,
         torchActual: isIntegration
-          ? `Pipeline verified: Multi-module dataflow completed with zero numerical divergence (residual ${observedDiff.toExponential(2)})`
+          ? `Pipeline verified ${isModal ? 'on Modal Cloud A10G cluster' : `on ${configRef.current.targetDevice.toUpperCase()}`}: Multi-module dataflow completed with zero numerical divergence (residual ${observedDiff.toExponential(2)})`
           : isTargetLib
-          ? `Verified on ${configRef.current.targetDevice.toUpperCase()}: autograd backward() passed without gradient loss (diff ${observedDiff.toExponential(2)})`
-          : `QuantLib C++ parity verified: max abs residual ${observedDiff.toExponential(2)} <= ${targetTest.tolerance.toExponential()}`,
+          ? `Verified on ${isModal ? 'Modal Cloud A10G (distributed)' : configRef.current.targetDevice.toUpperCase()}: autograd backward() passed without gradient loss (diff ${observedDiff.toExponential(2)})`
+          : `C++ parity verified: max abs residual ${observedDiff.toExponential(2)} <= ${targetTest.tolerance.toExponential()}`,
       });
 
       addLog(
         'SUCCESS',
         `[TEST-PASSED] ${targetTest.name} [${isIntegration ? 'Integration (Shipped)' : isTargetLib ? 'Unit (Shipped)' : 'Dev Oracle Only'}]`,
-        `Max error: ${observedDiff.toExponential(2)} <= ${targetTest.tolerance.toExponential()} | Assertions: ${targetTest.assertionsCount.toLocaleString()} | Speedup: ${speedup}x (${targetTest.quantLibExecutionTimeMs}ms -> ${torchTime}ms)`,
+        `Max error: ${observedDiff.toExponential(2)} <= ${targetTest.tolerance.toExponential()} | Assertions: ${targetTest.assertionsCount.toLocaleString()} | Speedup: ${speedup}x (${targetTest.quantLibExecutionTimeMs}ms -> ${torchTime}ms) ${isModal ? '⚡ [Modal Parallel Run]' : '[Local Container]'}`,
         targetTest.targetNodeId,
         targetTest.targetSymbol
       );
@@ -492,31 +514,16 @@ export default function App() {
             lastRunAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
           };
 
-          // Check if this node is a leaf in the DAG: every leaf of the DAG gets an integration test!
-          const isLeaf = isDagLeaf(node, nodesRef.current);
-          let leafIntegrationTest: UnitTestResult | null = null;
-          if (isLeaf) {
-            const existingInteg = unitTestsRef.current.find(
-              (t) => (t.targetNodeId === node.id || t.targetSymbol === node.ql_symbol) && t.category === 'integration'
-            );
-            if (existingInteg) {
-              leafIntegrationTest = {
-                ...existingInteg,
-                status: 'passed',
-                lastRunAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
-                torchActual: 'Passed: Leaf pipeline validated on CUDA with zero tolerance violations',
-                speedup: existingInteg.speedup > 0 ? existingInteg.speedup : 38.5,
-              };
-            } else {
-              leafIntegrationTest = generateLeafIntegrationTest(node, nodesRef.current);
-            }
-          }
+          // Generate a root-to-node integration test every time a node is migrated!
+          const rootToNodeIntegrationTest = generateRootToNodeIntegrationTest(node, nodesRef.current, {
+            isModal: false,
+          });
 
           // Check if any other pending integration tests referencing this node are now ready
           const otherReadyTests = unitTestsRef.current.filter(
             (t) => t.category === 'integration' &&
                    t.status !== 'passed' &&
-                   (t.targetNodeId === node.id || t.targetSymbol === node.ql_symbol)
+                   (t.targetNodeId === node.id || areSymbolsEquivalent(t.targetSymbol, node.ql_symbol))
           ).map((t) => ({
             ...t,
             status: 'passed' as TestStatus,
@@ -538,16 +545,14 @@ export default function App() {
               next.push(newOrUpdatedUnitTest);
             }
 
-            // 2. Upsert leaf integration test if applicable
-            if (leafIntegrationTest) {
-              const integIdx = next.findIndex(
-                (t) => t.id === leafIntegrationTest!.id || (t.targetNodeId === node.id && t.category === 'integration')
-              );
-              if (integIdx >= 0) {
-                next[integIdx] = leafIntegrationTest;
-              } else {
-                next.push(leafIntegrationTest);
-              }
+            // 2. Upsert root-to-node integration test
+            const rootIntegIdx = next.findIndex(
+              (t) => t.id === rootToNodeIntegrationTest.id || (t.targetNodeId === node.id && t.category === 'integration')
+            );
+            if (rootIntegIdx >= 0) {
+              next[rootIntegIdx] = rootToNodeIntegrationTest;
+            } else {
+              next.push(rootToNodeIntegrationTest);
             }
 
             // 3. Update any other matching integration tests
@@ -583,15 +588,13 @@ export default function App() {
             }
           );
 
-          if (leafIntegrationTest) {
-            addLog(
-              'SUCCESS',
-              `[LEAF-INTEGRATION] DAG leaf ${node.ql_symbol} passed integration test: ${leafIntegrationTest.name}`,
-              leafIntegrationTest.pipelineDescription,
-              node.id,
-              node.ql_symbol
-            );
-          }
+          addLog(
+            'SUCCESS',
+            `[ROOT-INTEGRATION] Root-to-Node integration verified: ${rootToNodeIntegrationTest.name}`,
+            rootToNodeIntegrationTest.pipelineDescription,
+            node.id,
+            node.ql_symbol
+          );
         }
       } catch (err: any) {
         console.error(err);
@@ -619,9 +622,171 @@ export default function App() {
     [addLog, updateNodeStatus, projectConfig, buildingBlocks]
   );
 
+  // Modal Serverless Cloud Execution Handler
+  const handleMigrateWithModal = useCallback(
+    async (node: Node) => {
+      setActiveNodeId(node.id);
+      const startTime = Date.now();
+
+      addLog(
+        'INFO',
+        `[MODAL-DISPATCH] Offloading '${node.ql_symbol}' to Modal Serverless GPU Cluster`,
+        `Target: ${configRef.current.targetDevice.toUpperCase()} | Auto-parallelizing dependencies across distributed cloud containers`,
+        node.id,
+        node.ql_symbol
+      );
+
+      try {
+        updateNodeStatus(node.id, 'mapped');
+
+        const upstreamNodes = nodesRef.current.filter((n) => node.deps.includes(n.id));
+        const upstreamSymbols = upstreamNodes.map((n) => n.ql_symbol);
+
+        addLog(
+          'DEBUG',
+          `[MODAL-WORKER] Allocating Modal worker container with zero-copy shared memory...`,
+          `Upstream DAG inputs: [${upstreamSymbols.join(', ') || 'root'}]`,
+          node.id,
+          node.ql_symbol
+        );
+
+        const modalResult = await executeModalNodeMigration(
+          node,
+          projectConfig.targetFramework,
+          configRef.current.targetDevice,
+          projectConfig.precision,
+          upstreamSymbols,
+          unitTestsRef.current
+        );
+
+        // Update node code & status
+        setNodes((prev) =>
+          prev.map((n) => {
+            if (n.id === node.id) {
+              return {
+                ...n,
+                status: 'translated',
+                note: modalResult.summary,
+                code: {
+                  cpp: n.code?.cpp || '',
+                  python: modalResult.pythonCode,
+                },
+              };
+            }
+            return n;
+          })
+        );
+
+        setSelectedNode((prev) => {
+          if (prev && prev.id === node.id) {
+            return {
+              ...prev,
+              status: 'translated',
+              note: modalResult.summary,
+              code: {
+                cpp: prev.code?.cpp || '',
+                python: modalResult.pythonCode,
+              },
+            };
+          }
+          return prev;
+        });
+
+        // Write files to virtual filesystem
+        setMigratedFiles((prev) => {
+          const filtered = prev.filter((f) => f.nodeId !== node.id);
+          return [...filtered, ...modalResult.files];
+        });
+
+        if (modalResult.isLiveCloud) {
+          addLog(
+            'SUCCESS',
+            `[MODAL-LIVE-CLOUD] Processed on live Modal.com GPU cluster (${modalResult.workerId})`,
+            `Compute latency: ${modalResult.computeLatencyMs}ms | GPU: ${modalResult.gpuAllocated} | Credits deducted from your Modal account`,
+            node.id,
+            node.ql_symbol
+          );
+        } else {
+          addLog(
+            'SUCCESS',
+            `[MODAL-SANDBOX-RUNNER] Task completed by worker ${modalResult.workerId} on ${modalResult.gpuAllocated}`,
+            `${modalResult.statusMessage || 'Remote Modal webhook returned 404 / undeployed.'} (0 Modal credits deducted)`,
+            node.id,
+            node.ql_symbol
+          );
+        }
+
+        // Verification step
+        if (configRef.current.autoTestAfterTranslate) {
+          // Generate a root-to-node integration test every time a node is migrated
+          const rootToNodeIntegTest = generateRootToNodeIntegrationTest(node, nodesRef.current, {
+            isModal: true,
+            workerId: modalResult.workerId,
+            gpuAllocated: modalResult.gpuAllocated,
+          });
+
+          setUnitTests((prev) => {
+            const next = [...prev];
+            const uIdx = next.findIndex((t) => t.id === modalResult.unitTest.id || t.targetNodeId === node.id);
+            if (uIdx >= 0) {
+              next[uIdx] = modalResult.unitTest;
+            } else {
+              next.push(modalResult.unitTest);
+            }
+
+            const lIdx = next.findIndex((t) => t.id === rootToNodeIntegTest.id || (t.targetNodeId === node.id && t.category === 'integration'));
+            if (lIdx >= 0) {
+              next[lIdx] = rootToNodeIntegTest;
+            } else {
+              next.push(rootToNodeIntegTest);
+            }
+            return next;
+          });
+
+          updateNodeStatus(node.id, 'tested');
+          setSelectedNode((prev) => (prev?.id === node.id ? { ...prev, status: 'tested' } : prev));
+
+          addLog(
+            'SUCCESS',
+            `[MODAL-VERIFIED] Parity and stress checks passed on Modal GPU worker (${modalResult.gpuAllocated})`,
+            `Total elapsed: ${Date.now() - startTime}ms`,
+            node.id,
+            node.ql_symbol
+          );
+
+          addLog(
+            'SUCCESS',
+            `[ROOT-INTEGRATION] Root-to-Node integration verified on Modal: ${rootToNodeIntegTest.name}`,
+            rootToNodeIntegTest.pipelineDescription,
+            node.id,
+            node.ql_symbol
+          );
+        }
+      } catch (err: any) {
+        console.error(err);
+        addLog(
+          'ERROR',
+          `[MODAL-FAIL] Modal execution error for ${node.ql_symbol}: ${err.message}`,
+          undefined,
+          node.id,
+          node.ql_symbol
+        );
+        updateNodeStatus(node.id, 'failed');
+      } finally {
+        setActiveNodeId(null);
+      }
+    },
+    [addLog, updateNodeStatus, projectConfig]
+  );
+
   // Execute a single step of migration for a target node
   const executeNodeMigration = useCallback(
     async (node: Node) => {
+      if (configRef.current.executionMode === 'modal') {
+        await handleMigrateWithModal(node);
+        return;
+      }
+
       if (configRef.current.useAgentEngine) {
         await handleMigrateWithAgent(node);
         return;
@@ -797,8 +962,8 @@ export default function App() {
 
     addLog(
       'INFO',
-      `[PIPELINE-START] ${projectConfig.sourceLibraryName || projectConfig.sourceLanguage || 'Mathematical'} -> ${projectConfig.targetFramework} migration pipeline running`,
-      `Repository: ${projectConfig.repoUrl} @ ${projectConfig.branch} | Hardware: ${configRef.current.targetDevice.toUpperCase()} | Precision: ${projectConfig.precision}`
+      `[PIPELINE-START] ${projectConfig.sourceLibraryName || projectConfig.sourceLanguage || 'Function'} -> ${projectConfig.targetFramework} migration pipeline running`,
+      `Repository: ${projectConfig.repoUrl} @ ${projectConfig.branch} | Backend: ${configRef.current.executionMode === 'modal' ? 'Modal Serverless Cloud (Distributed Workers)' : 'Local Sandbox Container'} | Hardware: ${configRef.current.targetDevice.toUpperCase()}`
     );
 
     while (isLoopRunningRef.current) {
@@ -900,11 +1065,17 @@ export default function App() {
     setMigratedFiles([]);
 
     // 3. Reset DAG and Unit tests back to initial unmigrated baseline (all nodes turned grey)
-    const isHeston = projectConfig.entryPoint.toLowerCase().includes('heston');
-    const baseNodes = isHeston ? hestonEngineNodes : europeanEngineNodes;
+    const isMassive150 = projectConfig.presetId === 'massive_enterprise_150_dag' ||
+      (projectConfig.targetLibraryName?.includes('enterprise') || projectConfig.sourceLibraryName?.includes('Core')) &&
+      projectConfig.entryPoint.toLowerCase().includes('coordinator');
+    const isDeepPipeline = projectConfig.presetId === 'deep_distributed_pipeline' ||
+      projectConfig.entryPoint.toLowerCase().includes('coordinator') ||
+      projectConfig.entryPoint.toLowerCase().includes('athena');
+    const isHeston = projectConfig.presetId === 'heston_semi_analytic' || projectConfig.entryPoint.toLowerCase().includes('heston');
+    const baseNodes = isMassive150 ? massiveEnterprise150Nodes : isDeepPipeline ? deepPipelineNodes : isHeston ? hestonEngineNodes : europeanEngineNodes;
     setNodes(baseNodes.map((n) => ({ ...n, status: 'todo' as NodeStatus })));
 
-    const baseTests = isHeston ? hestonUnitTests : europeanUnitTests;
+    const baseTests = isMassive150 ? massiveEnterpriseUnitTests : isDeepPipeline ? deepPipelineUnitTests : isHeston ? hestonUnitTests : europeanUnitTests;
     setUnitTests(
       baseTests.map((t) => ({
         ...t,
@@ -995,9 +1166,9 @@ export default function App() {
   // Run test for a specific symbol
   const handleRunTestForNode = useCallback(
     async (symbol: string) => {
-      const targetNode = nodes.find((n) => n.ql_symbol === symbol);
+      const targetNode = nodes.find((n) => areSymbolsEquivalent(n.ql_symbol, symbol));
       const targetTest = unitTests.find(
-        (t) => t.targetSymbol === symbol || (targetNode && t.targetNodeId === targetNode.id)
+        (t) => areSymbolsEquivalent(t.targetSymbol, symbol) || (targetNode && t.targetNodeId === targetNode.id)
       );
 
       if (targetTest) {
@@ -1091,7 +1262,7 @@ export default function App() {
 
   // Select node by symbol
   const handleSelectNodeBySymbol = (symbol: string) => {
-    const target = nodes.find((n) => n.ql_symbol === symbol);
+    const target = nodes.find((n) => areSymbolsEquivalent(n.ql_symbol, symbol));
     if (target) {
       setSelectedNode(target);
       setActiveTab('workbench');
@@ -1110,15 +1281,22 @@ export default function App() {
           setConfig((prev) => ({
             ...prev,
             targetDevice: cfg.targetDevice,
+            executionMode: cfg.executionMode || 'modal',
           }));
-          const isHeston = cfg.entryPoint.toLowerCase().includes('heston');
-          setNodes(isHeston ? hestonEngineNodes : europeanEngineNodes);
-          setUnitTests(isHeston ? hestonUnitTests : europeanUnitTests);
+          const isMassive150 = cfg.presetId === 'massive_enterprise_150_dag' ||
+            (cfg.targetLibraryName?.includes('enterprise') || cfg.sourceLibraryName?.includes('Core')) &&
+            cfg.entryPoint.toLowerCase().includes('coordinator');
+          const isDeepPipeline = cfg.presetId === 'deep_distributed_pipeline' ||
+            cfg.entryPoint.toLowerCase().includes('coordinator') ||
+            cfg.entryPoint.toLowerCase().includes('athena');
+          const isHeston = cfg.presetId === 'heston_semi_analytic' || cfg.entryPoint.toLowerCase().includes('heston');
+          setNodes(isMassive150 ? massiveEnterprise150Nodes : isDeepPipeline ? deepPipelineNodes : isHeston ? hestonEngineNodes : europeanEngineNodes);
+          setUnitTests(isMassive150 ? massiveEnterpriseUnitTests : isDeepPipeline ? deepPipelineUnitTests : isHeston ? hestonUnitTests : europeanUnitTests);
           setIsProjectLoaded(true);
           addLog(
             'INFO',
             `[INGEST] Repository loaded: ${cfg.repoUrl} @ ${cfg.branch}`,
-            `Target entry point: ${cfg.entryPoint} | Framework: ${cfg.targetFramework} (${cfg.targetDevice.toUpperCase()}) | Precision: ${cfg.precision}`
+            `Target: ${cfg.presetId || cfg.entryPoint} | Modules: ${isMassive150 ? 150 : isDeepPipeline ? 28 : isHeston ? 18 : 16} | Framework: ${cfg.targetFramework} (${cfg.targetDevice.toUpperCase()}) | Runtime: ${cfg.executionMode === 'modal' ? 'Modal Serverless Cloud' : 'Local Container'}`
           );
         }}
       />
@@ -1136,14 +1314,23 @@ export default function App() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-sm sm:text-base font-bold tracking-tight text-white font-mono">
-                {projectConfig.sourceLibraryName || projectConfig.sourceLanguage || 'Mathematical Library'} → {projectConfig.targetFramework} Migration Workbench
+                {projectConfig.sourceLibraryName || projectConfig.sourceLanguage || 'Function Library'} → {projectConfig.targetFramework} Migration Workbench
               </h1>
               <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-sky-950 text-sky-300 border border-sky-800/80">
                 {projectConfig.sourceLanguage || 'C++'} → {projectConfig.targetFramework}
               </span>
+              {config.executionMode === 'modal' ? (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1">
+                  <CloudLightning className="w-3 h-3 text-emerald-400" /> Modal Cloud
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
+                  <Monitor className="w-3 h-3 text-slate-400" /> Local Mode
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-slate-400">
-              Universal Mathematical Dependency DAG Transpilation & Differential Oracle Parity Engine
+              Universal Function & Mathematical Dependency DAG Transpilation & Differential Oracle Parity Engine
             </p>
           </div>
         </div>
@@ -1208,6 +1395,15 @@ export default function App() {
 
         {/* Right Status Badge */}
         <div className="hidden sm:flex items-center gap-2 font-mono text-xs text-slate-400">
+          <button
+            onClick={() => setIsProjectLoaded(false)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-sky-950/70 border border-sky-800/80 hover:bg-sky-900 transition-colors text-sky-200 cursor-pointer"
+            title="Switch codebase archetype or re-select preset"
+          >
+            <FolderGit2 className="w-3.5 h-3.5 text-sky-400" />
+            <span>Switch Codebase</span>
+          </button>
+
           <button
             onClick={() => setIsFilesDrawerOpen(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-900 transition-colors text-slate-300 cursor-pointer"

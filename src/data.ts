@@ -972,5 +972,585 @@ def generate_live_quotes(market_quotes, surrogate_model):
   }
 ];
 
+// ============================================================================
+// MODEL 3: Deep Function Dependency DAG (Non-Mathematical + Parallel Simulation Pipeline)
+// 28 nodes, 10 levels deep — specifically demonstrates Modal serverless parallelization speedup
+// ============================================================================
+export const deepPipelineNodes: Node[] = [
+  // Level 0: Ingestion, Memory Serialization & Schema Validation (Non-Mathematical Primitives)
+  {
+    id: 'm_1',
+    ql_symbol: 'ProtobufMessageBuffer',
+    path: 'src/io/protobuf_buffer.cpp',
+    kind: 'infrastructure',
+    status: 'tested',
+    deps: [],
+    note: 'Zero-copy binary memory arena deserializer for streaming market & sensor events',
+    complexity: 'medium',
+    estimatedHours: 4,
+    code: {
+      cpp: `// C++ zero-copy memory arena parser
+class ProtobufMessageBuffer {
+public:
+    bool parseFromArray(const uint8_t* data, size_t size);
+    std::string_view getPayload() const;
+};`,
+      python: `# Python / Vectorized Buffer: py_distributed/io/buffer.py
+class ProtobufMessageBuffer:
+    """Zero-copy memoryview wrapper with direct NumPy/PyTorch tensor zero-copy ingestion."""
+    def __init__(self, raw_bytes: bytes):
+        self.view = memoryview(raw_bytes)`
+    }
+  },
+  {
+    id: 'm_2',
+    ql_symbol: 'JsonSchemaValidator',
+    path: 'src/config/schema_validator.cpp',
+    kind: 'infrastructure',
+    status: 'tested',
+    deps: [],
+    note: 'Deterministic configuration and telemetry payload schema validator',
+    complexity: 'low',
+    estimatedHours: 2,
+    code: {
+      cpp: `// C++ RapidJSON validator
+bool validateConfig(const std::string& json);`,
+      python: `# Python / Pydantic schema validation
+from pydantic import BaseModel, Field
+
+class IngestionConfig(BaseModel):
+    batch_size: int = Field(gt=0)
+    worker_concurrency: int = Field(default=32)`
+    }
+  },
+  {
+    id: 'm_3',
+    ql_symbol: 'NetworkTelemetryIngest',
+    path: 'src/net/telemetry_listener.cpp',
+    kind: 'infrastructure',
+    status: 'tested',
+    deps: [],
+    note: 'Async epoll/io_uring TCP & UDP multi-threaded packet receiver ring buffer',
+    complexity: 'high',
+    estimatedHours: 8,
+    code: {
+      cpp: `// C++ io_uring event loop listener
+void runTelemetryLoop(int port);`,
+      python: `# Python asyncio / uvloop event listener
+import asyncio
+
+async def listen_telemetry_stream(port: int = 9000):
+    reader, writer = await asyncio.start_server(handle_packet, port=port)`
+    }
+  },
+  {
+    id: 'm_4',
+    ql_symbol: 'MurmurHash64A',
+    path: 'src/hash/murmur3.cpp',
+    kind: 'pure_math',
+    status: 'tested',
+    deps: [],
+    note: 'Vectorized 64-bit seed hashing for consistent client partitioning',
+    complexity: 'low',
+    estimatedHours: 2,
+    code: {
+      cpp: `uint64_t MurmurHash64A(const void* key, int len, uint64_t seed);`,
+      python: `import mmh3
+def hash_partition(key: str, seed: int = 42) -> int:
+    return mmh3.hash64(key, seed)[0]`
+    }
+  },
+
+  // Level 1: Extraction, Sanitization & Cache Indexing
+  {
+    id: 'm_5',
+    ql_symbol: 'SanitizePayloadStrings',
+    path: 'src/utils/text_sanitizer.cpp',
+    kind: 'date_logic',
+    status: 'tested',
+    deps: ['m_1', 'm_2'],
+    note: 'UTF-8 validation, whitespace normalization, and injection attack scrubbing',
+    complexity: 'low',
+    estimatedHours: 3,
+    code: {
+      cpp: `std::string sanitizePayload(const std::string& raw);`,
+      python: `def sanitize_payload(text: str) -> str:
+    return text.strip().encode('utf-8', errors='ignore').decode('utf-8')`
+    }
+  },
+  {
+    id: 'm_6',
+    ql_symbol: 'DistributedCacheKeyGenerator',
+    path: 'src/cache/key_builder.cpp',
+    kind: 'infrastructure',
+    status: 'tested',
+    deps: ['m_4'],
+    note: 'Cache key generator with timestamp bucketing and salted shard indexing',
+    complexity: 'low',
+    estimatedHours: 2,
+    code: {
+      cpp: `std::string makeCacheKey(uint64_t id, int64_t epochBucket);`,
+      python: `def generate_cache_key(entity_id: int, epoch: int) -> str:
+    return f"shard:{entity_id % 128}:{entity_id}:{epoch // 60}"`
+    }
+  },
+  {
+    id: 'm_7',
+    ql_symbol: 'RateLimitingTokenBucket',
+    path: 'src/security/rate_limiter.cpp',
+    kind: 'infrastructure',
+    status: 'tested',
+    deps: ['m_3'],
+    note: 'Atomic CAS token-bucket rate limiter enforcing 100k requests/sec SLA',
+    complexity: 'medium',
+    estimatedHours: 4,
+    code: {
+      cpp: `bool tryAcquireToken(uint64_t clientId, double rate, double burst);`,
+      python: `import time
+
+class TokenBucket:
+    def __init__(self, capacity: int, fill_rate: float):
+        self.capacity, self.fill_rate = capacity, fill_rate
+        self.tokens, self.last_time = capacity, time.time()
+    def allow(self) -> bool:
+        # Atomic token deduction
+        return True`
+    }
+  },
+
+  // Level 2: Data Normalization & Distributed Sharding
+  {
+    id: 'm_8',
+    ql_symbol: 'TensorBatchPacker',
+    path: 'src/tensor/batch_pack.cpp',
+    kind: 'infrastructure',
+    status: 'translated',
+    deps: ['m_5', 'm_6'],
+    note: 'Packs heterogeneous variable-length data streams into dense contiguous memory',
+    complexity: 'high',
+    estimatedHours: 6,
+    code: {
+      cpp: `void packToDenseBuffer(const std::vector<Event>& events, float* out);`,
+      python: `import torch
+
+def pack_events_to_tensor(events: list) -> torch.Tensor:
+    return torch.as_tensor([e.values for e in events], dtype=torch.float32, device="cuda")`
+    }
+  },
+  {
+    id: 'm_9',
+    ql_symbol: 'ConsistentHashingRing',
+    path: 'src/cluster/hash_ring.cpp',
+    kind: 'infrastructure',
+    status: 'translated',
+    deps: ['m_6'],
+    note: 'Virtual node consistent hashing topology routing tasks to Modal cloud workers',
+    complexity: 'medium',
+    estimatedHours: 5,
+    code: {
+      cpp: `std::string selectNode(const std::string& key);`,
+      python: `class ConsistentHashRing:
+    def get_worker(self, key: str) -> str:
+        return f"modal-worker-{hash(key) % 64}"`
+    }
+  },
+  {
+    id: 'm_10',
+    ql_symbol: 'TelemetryAnomalyFilter',
+    path: 'src/analytics/anomaly_filter.cpp',
+    kind: 'pure_math',
+    status: 'translated',
+    deps: ['m_7'],
+    note: 'Rolling window Z-score and IQR rejection for corrupt sensor/quote records',
+    complexity: 'medium',
+    estimatedHours: 4,
+    code: {
+      cpp: `bool isAnomaly(double value, double mean, double stddev);`,
+      python: `def is_anomaly(val: float, mean: float, std: float) -> bool:
+    return abs(val - mean) > 3.5 * std`
+    }
+  },
+
+  // Level 3: Feature Matrix Transformation & Cross-Correlation
+  {
+    id: 'm_11',
+    ql_symbol: 'DenseFeatureNormalizer',
+    path: 'src/ml/feature_scaler.cpp',
+    kind: 'pure_math',
+    status: 'translated',
+    deps: ['m_8'],
+    note: 'Robust quantile scaling with exponential moving average updating',
+    complexity: 'medium',
+    estimatedHours: 4,
+    code: {
+      cpp: `void normalizeMatrix(float* matrix, size_t rows, size_t cols);`,
+      python: `import torch
+
+def robust_normalize(t: torch.Tensor) -> torch.Tensor:
+    q25, q75 = torch.quantile(t, 0.25, dim=0), torch.quantile(t, 0.75, dim=0)
+    return (t - torch.median(t, dim=0).values) / (q75 - q25 + 1e-8)`
+    }
+  },
+  {
+    id: 'm_12',
+    ql_symbol: 'CrossCorrelationMatrix',
+    path: 'src/math/covariance.cpp',
+    kind: 'pure_math',
+    status: 'mapped',
+    deps: ['m_8', 'm_10'],
+    note: 'Batched pairwise covariance & Pearson correlation matrix calculator on GPU',
+    complexity: 'high',
+    estimatedHours: 8,
+    code: {
+      cpp: `void computeCovariance(const double* X, size_t N, size_t D, double* cov);`,
+      python: `import torch
+
+def compute_cross_correlation(t: torch.Tensor) -> torch.Tensor:
+    x = t - t.mean(dim=0, keepdim=True)
+    c = torch.mm(x.T, x) / (x.size(0) - 1)
+    d = torch.sqrt(torch.diag(c))
+    return c / torch.outer(d, d)`
+    }
+  },
+  {
+    id: 'm_13',
+    ql_symbol: 'ModalWorkerDispatcher',
+    path: 'src/cloud/modal_dispatcher.cpp',
+    kind: 'infrastructure',
+    status: 'mapped',
+    deps: ['m_9'],
+    note: 'Serverless Modal runner orchestrating parallel container executions',
+    complexity: 'high',
+    estimatedHours: 6,
+    code: {
+      cpp: `// Modal HTTP client dispatcher
+void dispatchBatchAsync(const std::string& workerUrl, const void* payload);`,
+      python: `# Modal Function Map Dispatcher
+import modal
+
+@app.function(concurrency_limit=128)
+def parallel_modal_worker(batch: dict):
+    return process_slice(batch)`
+    }
+  },
+
+  // Level 4: Dimensionality Reduction & Sparse Graph Construction
+  {
+    id: 'm_14',
+    ql_symbol: 'TridiagonalEigenSolver',
+    path: 'src/math/eigensolver.cpp',
+    kind: 'solver',
+    status: 'mapped',
+    deps: ['m_12'],
+    note: 'QR algorithm with Wilkinson shift for spectral decomposition',
+    complexity: 'high',
+    estimatedHours: 10,
+    code: {
+      cpp: `void solveEigen(const double* A, int N, double* eigenvalues, double* eigenvectors);`,
+      python: `import torch
+
+def solve_eigen(cov: torch.Tensor):
+    return torch.linalg.eigh(cov)`
+    }
+  },
+  {
+    id: 'm_15',
+    ql_symbol: 'KNNGraphBuilder',
+    path: 'src/graph/knn_builder.cpp',
+    kind: 'pure_math',
+    status: 'mapped',
+    deps: ['m_11', 'm_12'],
+    note: 'Builds approximate nearest neighbor graph using Hierarchical Navigable Small World (HNSW)',
+    complexity: 'high',
+    estimatedHours: 12,
+    code: {
+      cpp: `void buildKNNGraph(const float* features, size_t N, int k, int* adjacency);`,
+      python: `import torch
+
+def build_knn_adjacency(features: torch.Tensor, k: int = 16) -> torch.Tensor:
+    dist = torch.cdist(features, features)
+    _, idx = torch.topk(dist, k=k+1, largest=False)
+    return idx[:, 1:]`
+    }
+  },
+  {
+    id: 'm_16',
+    ql_symbol: 'ParallelParityOrchestrator',
+    path: 'src/testing/parallel_oracle.cpp',
+    kind: 'infrastructure',
+    status: 'mapped',
+    deps: ['m_13'],
+    note: 'Executes thousands of C++ vs PyTorch test vectors concurrently over Modal workers',
+    complexity: 'high',
+    estimatedHours: 8,
+    code: {
+      cpp: `void compareParityBatches(const TestVector* vectors, size_t count);`,
+      python: `import modal
+
+@app.function(retries=3)
+def verify_parity_chunk(chunk):
+    # Distributed parallel verification across 64 Modal workers
+    return [verify_sample(s) for s in chunk]`
+    }
+  },
+
+  // Level 5: High-Performance Solver & Optimization Kernels
+  {
+    id: 'm_17',
+    ql_symbol: 'ConjugateGradientSolver',
+    path: 'src/math/cg_solver.cpp',
+    kind: 'solver',
+    status: 'todo',
+    deps: ['m_14', 'm_15'],
+    note: 'Preconditioned Conjugate Gradient for large sparse linear systems',
+    complexity: 'high',
+    estimatedHours: 8,
+    code: {
+      cpp: `void solveCG(const SparseMatrix& A, const Vector& b, Vector& x);`,
+      python: `import torch
+
+def conjugate_gradient(A_matmul, b: torch.Tensor, max_iter: int = 100):
+    x = torch.zeros_like(b)
+    r = b - A_matmul(x)
+    p = r.clone()
+    for _ in range(max_iter):
+        Ap = A_matmul(p)
+        alpha = torch.dot(r, r) / torch.dot(p, Ap)
+        x += alpha * p
+        r_next = r - alpha * Ap
+        if torch.norm(r_next) < 1e-8: break
+        p = r_next + (torch.dot(r_next, r_next) / torch.dot(r, r)) * p
+        r = r_next
+    return x`
+    }
+  },
+  {
+    id: 'm_18',
+    ql_symbol: 'GraphCommunityDetection',
+    path: 'src/graph/louvain.cpp',
+    kind: 'pure_math',
+    status: 'todo',
+    deps: ['m_15'],
+    note: 'Louvain modularity optimization for cluster segmentation',
+    complexity: 'medium',
+    estimatedHours: 6,
+    code: {
+      cpp: `std::vector<int> detectCommunities(const AdjacencyList& graph);`,
+      python: `def detect_communities(adj: torch.Tensor):
+    # Modular community partition
+    return partitions`
+    }
+  },
+  {
+    id: 'm_19',
+    ql_symbol: 'DifferentialEvolutionOptimizer',
+    path: 'src/optim/differential_evolution.cpp',
+    kind: 'solver',
+    status: 'todo',
+    deps: ['m_14', 'm_16'],
+    note: 'Stochastic population-based global parameter optimization with crossover mutations',
+    complexity: 'high',
+    estimatedHours: 10,
+    code: {
+      cpp: `Vector optimizeDE(ObjectiveFunc obj, const Bounds& bounds);`,
+      python: `import torch
+
+def differential_evolution_step(population: torch.Tensor, fitness: torch.Tensor):
+    # Batched vector mutations on GPU
+    return updated_population`
+    }
+  },
+
+  // Level 6: Neural Surrogate & Non-Linear Manifold Projection
+  {
+    id: 'm_20',
+    ql_symbol: 'DeepSurrogateKernel',
+    path: 'src/surrogate/deep_kernel.cpp',
+    kind: 'pure_math',
+    status: 'todo',
+    deps: ['m_17', 'm_18'],
+    note: 'Multi-layer perceptron with Gaussian Error Linear Units (GELU) approximating solvers',
+    complexity: 'high',
+    estimatedHours: 12,
+    code: {
+      cpp: `void evaluateNeuralSurrogate(const float* input, float* output);`,
+      python: `import torch
+import torch.nn as nn
+
+class DeepSurrogate(nn.Module):
+    def __init__(self, in_dim=32, hidden=128, out_dim=8):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, out_dim)
+        )
+    def forward(self, x):
+        return self.net(x)`
+    }
+  },
+  {
+    id: 'm_21',
+    ql_symbol: 'SensitivityAutogradEngine',
+    path: 'src/autograd/jacobian_calculator.cpp',
+    kind: 'pure_math',
+    status: 'todo',
+    deps: ['m_17', 'm_19'],
+    note: 'Automatic differentiation reverse-mode vector-Jacobian product (VJP)',
+    complexity: 'high',
+    estimatedHours: 8,
+    code: {
+      cpp: `// C++ adol-c automatic differentiation tape
+void computeJacobian(const double* x, double* J);`,
+      python: `import torch
+
+def compute_vjp(func, inputs: torch.Tensor, v: torch.Tensor):
+    return torch.autograd.functional.vjp(func, inputs, v)`
+    }
+  },
+
+  // Level 7: Real-Time State Space Filtering & Kalman Correction
+  {
+    id: 'm_22',
+    ql_symbol: 'ExtendedKalmanFilter',
+    path: 'src/state/ekf.cpp',
+    kind: 'solver',
+    status: 'todo',
+    deps: ['m_20', 'm_21'],
+    note: 'Non-linear state space estimation with dynamic covariance updating',
+    complexity: 'high',
+    estimatedHours: 10,
+    code: {
+      cpp: `void predictAndUpdate(const Measurement& z, State& x, Covariance& P);`,
+      python: `def ekf_update(state: torch.Tensor, cov: torch.Tensor, z: torch.Tensor):
+    # GPU state space correction
+    return new_state, new_cov`
+    }
+  },
+  {
+    id: 'm_23',
+    ql_symbol: 'RiskScenarioMonteCarlo',
+    path: 'src/simulation/monte_carlo.cpp',
+    kind: 'pure_math',
+    status: 'todo',
+    deps: ['m_20', 'm_21'],
+    note: 'Simulates 5,000,000 parallel paths with quasi-random Sobol sequence generators',
+    complexity: 'high',
+    estimatedHours: 14,
+    code: {
+      cpp: `void runMonteCarlo(size_t numPaths, double* results);`,
+      python: `import torch
+
+def run_monte_carlo_gpu(n_paths: int = 5_000_000, device="cuda"):
+    sobol = torch.quasirandom.SobolEngine(dimension=4, scramble=True)
+    draws = sobol.draw(n_paths).to(device)
+    return draws`
+    }
+  },
+
+  // Level 8: Aggregation, Quantile Estimation & Decision Logic
+  {
+    id: 'm_24',
+    ql_symbol: 'TailValueAtRiskEstimator',
+    path: 'src/risk/cvar.cpp',
+    kind: 'pure_math',
+    status: 'todo',
+    deps: ['m_22', 'm_23'],
+    note: 'Calculates Expected Shortfall (CVaR 99%) and Cornish-Fisher higher-moment expansion',
+    complexity: 'medium',
+    estimatedHours: 6,
+    code: {
+      cpp: `double calculateCVaR(const double* pnl, size_t size, double alpha);`,
+      python: `import torch
+
+def calculate_cvar(pnl: torch.Tensor, alpha: float = 0.99) -> torch.Tensor:
+    q = torch.quantile(pnl, 1.0 - alpha)
+    return -pnl[pnl <= q].mean()`
+    }
+  },
+  {
+    id: 'm_25',
+    ql_symbol: 'DecisionPolicyEngine',
+    path: 'src/decision/policy.cpp',
+    kind: 'infrastructure',
+    status: 'todo',
+    deps: ['m_22'],
+    note: 'Rule-based compliance, margin bounds, and automated circuit breaker checks',
+    complexity: 'medium',
+    estimatedHours: 5,
+    code: {
+      cpp: `bool approveExecution(const RiskProfile& profile);`,
+      python: `def evaluate_policy(cvar: float, liquidity_ratio: float) -> bool:
+    return cvar < 50_000 and liquidity_ratio > 1.2`
+    }
+  },
+
+  // Level 9: Production API Gateway & Multi-Target WebSocket Dispatch
+  {
+    id: 'm_26',
+    ql_symbol: 'ModalMicroserviceGateway',
+    path: 'src/api/gateway.cpp',
+    kind: 'infrastructure',
+    status: 'todo',
+    deps: ['m_24', 'm_25'],
+    note: 'Zero-downtime HTTP/3 and WebSocket gateway broadcasting calibrated risk metrics',
+    complexity: 'high',
+    estimatedHours: 8,
+    code: {
+      cpp: `void startGatewayService(const Config& cfg);`,
+      python: `# Modal Webhook Gateway
+import modal
+
+@app.function()
+@modal.web_endpoint(method="POST")
+def api_predict_risk(payload: dict):
+    # Runs the complete 10-level vectorized DAG pipeline
+    return run_pipeline(payload)`
+    }
+  },
+  {
+    id: 'm_27',
+    ql_symbol: 'DistributedStorageAuditLogger',
+    path: 'src/audit/s3_audit.cpp',
+    kind: 'infrastructure',
+    status: 'todo',
+    deps: ['m_24', 'm_25'],
+    note: 'Asynchronous parquet serializer saving compliance snapshots to cloud object storage',
+    complexity: 'medium',
+    estimatedHours: 4,
+    code: {
+      cpp: `void writeParquetSnapshot(const AuditRecord& record);`,
+      python: `import pyarrow.parquet as pq
+
+def save_audit_snapshot(metrics: dict, uri: str):
+    # Writes immutable parquet compliance log
+    pass`
+    }
+  },
+
+  // Level 10: Terminal System Coordinator & Real-Time Dashboard
+  {
+    id: 'm_28',
+    ql_symbol: 'GlobalSystemCoordinator',
+    path: 'src/orchestrator/system_coordinator.cpp',
+    kind: 'infrastructure',
+    status: 'todo',
+    deps: ['m_26', 'm_27'],
+    note: 'Topological supervisor managing health checks, dynamic autoscaling, and Modal cloud workers',
+    complexity: 'high',
+    estimatedHours: 12,
+    code: {
+      cpp: `void coordinateSystemLifecycle();`,
+      python: `def main_coordinator():
+    # Final terminal node aggregating all 10 dependency layers
+    return "Distributed Multi-Stage Migration Pipeline Active"`
+    }
+  }
+];
+
+export { massiveEnterprise150Nodes } from './data/massivePipelineData';
+
 export const initialNodes: Node[] = europeanEngineNodes;
 export const nodes = initialNodes;

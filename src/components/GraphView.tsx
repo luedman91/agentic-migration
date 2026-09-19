@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { Node, NodeKind, NodeStatus, UnitTestResult } from '../types';
+import { areSymbolsEquivalent } from '../config/appConfig';
+import { computeTreeLayout } from '../utils/treeLayout';
 import {
   ZoomIn,
   ZoomOut,
@@ -15,7 +17,8 @@ import {
   Sparkles,
   ShieldCheck,
   Play,
-  ArrowDownUp
+  ArrowDownUp,
+  Scan
 } from 'lucide-react';
 
 interface GraphViewProps {
@@ -125,7 +128,7 @@ export default function GraphView({
     const isTested = (n: Node) => {
       if (n.status === 'tested') return true;
       return unitTests.some(
-        (t) => (t.targetNodeId === n.id || t.targetSymbol === n.ql_symbol) && t.status === 'passed'
+        (t) => (t.targetNodeId === n.id || areSymbolsEquivalent(t.targetSymbol, n.ql_symbol)) && t.status === 'passed'
       );
     };
 
@@ -231,10 +234,10 @@ export default function GraphView({
     // Create container group for zoom/pan
     const g = svg.append('g').attr('class', 'graph-main-group');
 
-    // Zoom setup with saved transform if possible
+    // Zoom setup with saved transform if possible (expanded scale extent to [0.08, 4] for 150-200 nodes)
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 3])
+      .scaleExtent([0.08, 4])
       .on('zoom', (event) => {
         g.attr('transform', event.transform);
       });
@@ -242,64 +245,35 @@ export default function GraphView({
     svg.call(zoom);
     zoomBehaviorRef.current = zoom;
 
-    // Group nodes by DAG rank for structured stratified initial positions
-    const rankGroups = new Map<number, SimulationNode[]>();
-    let maxRank = 0;
+    // Compute organic hierarchical tree coordinates that reflect the true function structure
+    const treePositions = computeTreeLayout(filteredNodes, {
+      orientation,
+      width,
+      height,
+    });
 
+    let maxRank = 0;
     const simNodes: SimulationNode[] = filteredNodes.map((n) => {
       const rank = nodeRanks.get(n.id) || 0;
       if (rank > maxRank) maxRank = rank;
+      const tPos = treePositions.get(n.id) || { x: width / 2, y: height / 2 };
+      
+      const cached = persistentPositionsRef.current.get(n.id);
+      const x = cached ? cached.x : tPos.x;
+      const y = cached ? cached.y : tPos.y;
+      const fx = isLocked ? (cached ? cached.fx ?? x : tPos.x) : (cached ? cached.fx : null);
+      const fy = isLocked ? (cached ? cached.fy ?? y : tPos.y) : (cached ? cached.fy : null);
+
       return {
         ...n,
         rank,
+        targetX: tPos.x,
+        targetY: tPos.y,
+        x,
+        y,
+        fx,
+        fy,
       };
-    });
-
-    simNodes.forEach((n) => {
-      const group = rankGroups.get(n.rank) || [];
-      group.push(n);
-      rankGroups.set(n.rank, group);
-    });
-
-    // Compute target coordinates for hierarchical layout based on orientation
-    const isVertical = orientation === 'vertical';
-    const layerSpacing = isVertical
-      ? (height - 180) / Math.max(1, maxRank)
-      : (width - 180) / Math.max(1, maxRank);
-
-    rankGroups.forEach((group, rank) => {
-      const count = group.length;
-      const crossSpacing = isVertical
-        ? (width - 160) / Math.max(1, count + 1)
-        : (height - 140) / Math.max(1, count + 1);
-
-      group.forEach((node, idx) => {
-        if (isVertical) {
-          // Vertical tree: leaves/primitives at top (rank 0), composite engines at bottom
-          node.targetX = 80 + (idx + 1) * crossSpacing;
-          node.targetY = 70 + rank * layerSpacing;
-        } else {
-          // Horizontal tree: leaves at left, composite engines at right
-          node.targetX = 90 + rank * layerSpacing;
-          node.targetY = 70 + (idx + 1) * crossSpacing;
-        }
-
-        // Restore cached position if we already have one
-        const cached = persistentPositionsRef.current.get(node.id);
-        if (cached) {
-          node.x = cached.x;
-          node.y = cached.y;
-          node.fx = isLocked ? cached.x : cached.fx;
-          node.fy = isLocked ? cached.y : cached.fy;
-        } else {
-          node.x = node.targetX;
-          node.y = node.targetY;
-          if (isLocked) {
-            node.fx = node.targetX;
-            node.fy = node.targetY;
-          }
-        }
-      });
     });
 
     const nodeMap = new Map(simNodes.map((n) => [n.id, n]));
@@ -315,7 +289,7 @@ export default function GraphView({
       });
     });
 
-    // Layout configuration: gentle forces so layout doesn't violently jump
+    // Layout configuration: anchor gracefully to hierarchical tree coordinates
     const simulation = d3
       .forceSimulation(simNodes)
       .force(
@@ -323,14 +297,14 @@ export default function GraphView({
         d3
           .forceLink(links)
           .id((d: any) => d.id)
-          .distance(viewMode === 'cone' ? 95 : 120)
-          .strength(0.4)
+          .distance(viewMode === 'cone' ? 85 : 105)
+          .strength(0.2)
       )
-      .force('charge', d3.forceManyBody().strength(-220))
-      .force('collision', d3.forceCollide().radius(48))
-      .force('x', d3.forceX((d: any) => d.targetX || width / 2).strength(0.35))
-      .force('y', d3.forceY((d: any) => d.targetY || height / 2).strength(0.25))
-      .alphaDecay(0.04);
+      .force('charge', d3.forceManyBody().strength(-140))
+      .force('collision', d3.forceCollide().radius(45))
+      .force('x', d3.forceX((d: any) => d.targetX || width / 2).strength(0.85))
+      .force('y', d3.forceY((d: any) => d.targetY || height / 2).strength(0.85))
+      .alphaDecay(0.06);
 
     simulationRef.current = simulation;
 
@@ -546,6 +520,43 @@ export default function GraphView({
       }
     });
 
+    // Auto-fit immediately if large graph (>20 nodes like 150-node enterprise pipeline)
+    if (simNodes.length > 20) {
+      setTimeout(() => {
+        if (!svgRef.current || !zoomBehaviorRef.current || !containerRef.current) return;
+        const containerWidth = containerRef.current.clientWidth || 800;
+        const containerHeight = containerRef.current.clientHeight || 600;
+
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+
+        simNodes.forEach((d) => {
+          const x = d.x ?? d.targetX ?? 0;
+          const y = d.y ?? d.targetY ?? 0;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        });
+
+        const padding = 60;
+        const graphWidth = Math.max(100, maxX - minX + padding * 2);
+        const graphHeight = Math.max(100, maxY - minY + padding * 2);
+
+        const scale = Math.max(0.08, Math.min(1.0, Math.min(containerWidth / graphWidth, containerHeight / graphHeight)));
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        const translateX = containerWidth / 2 - centerX * scale;
+        const translateY = containerHeight / 2 - centerY * scale;
+
+        const transform = d3.zoomIdentity.translate(translateX, translateY).scale(scale);
+        d3.select(svgRef.current).call(zoomBehaviorRef.current.transform, transform);
+      }, 50);
+    }
+
     return () => {
       simulation.stop();
     };
@@ -684,7 +695,7 @@ export default function GraphView({
     }
   };
 
-  // Re-organize DAG into neat topological strata
+  // Re-organize DAG into hierarchical functional tree structure
   const handleReorganizeLayout = () => {
     persistentPositionsRef.current.clear();
     const { nodesData } = elementsRef.current;
@@ -692,42 +703,21 @@ export default function GraphView({
     const width = containerRef.current.clientWidth || 800;
     const height = containerRef.current.clientHeight || 600;
 
-    let maxRank = 0;
-    const rankGroups = new Map<number, SimulationNode[]>();
-    nodesData.forEach((n) => {
-      if (n.rank > maxRank) maxRank = n.rank;
-      const group = rankGroups.get(n.rank) || [];
-      group.push(n);
-      rankGroups.set(n.rank, group);
+    const treePositions = computeTreeLayout(nodesData, {
+      orientation,
+      width,
+      height,
     });
 
-    const isVertical = orientation === 'vertical';
-    const layerSpacing = isVertical
-      ? (height - 180) / Math.max(1, maxRank)
-      : (width - 180) / Math.max(1, maxRank);
-
-    rankGroups.forEach((group, rank) => {
-      const count = group.length;
-      const crossSpacing = isVertical
-        ? (width - 160) / Math.max(1, count + 1)
-        : (height - 140) / Math.max(1, count + 1);
-
-      group.forEach((node, idx) => {
-        const tx = isVertical
-          ? 80 + (idx + 1) * crossSpacing
-          : 90 + rank * layerSpacing;
-        const ty = isVertical
-          ? 70 + rank * layerSpacing
-          : 70 + (idx + 1) * crossSpacing;
-
-        node.targetX = tx;
-        node.targetY = ty;
-        node.x = tx;
-        node.y = ty;
-        node.fx = isLocked ? tx : null;
-        node.fy = isLocked ? ty : null;
-        persistentPositionsRef.current.set(node.id, { x: tx, y: ty, fx: node.fx, fy: node.fy });
-      });
+    nodesData.forEach((node) => {
+      const tPos = treePositions.get(node.id) || { x: width / 2, y: height / 2 };
+      node.targetX = tPos.x;
+      node.targetY = tPos.y;
+      node.x = tPos.x;
+      node.y = tPos.y;
+      node.fx = isLocked ? tPos.x : null;
+      node.fy = isLocked ? tPos.y : null;
+      persistentPositionsRef.current.set(node.id, { x: tPos.x, y: tPos.y, fx: node.fx, fy: node.fy });
     });
 
     if (simulationRef.current) {
@@ -744,6 +734,48 @@ export default function GraphView({
   const handleResetZoom = () => {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
     d3.select(svgRef.current).transition().duration(300).call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
+  };
+
+  // Smart Fit to View: Auto-scales and centers the entire graph (whether 16 nodes or 150 nodes)
+  const handleFitView = () => {
+    if (!svgRef.current || !zoomBehaviorRef.current || !containerRef.current) return;
+    const { nodesData } = elementsRef.current;
+    if (!nodesData || nodesData.length === 0) {
+      handleResetZoom();
+      return;
+    }
+
+    const containerWidth = containerRef.current.clientWidth || 800;
+    const containerHeight = containerRef.current.clientHeight || 600;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    nodesData.forEach((d) => {
+      const x = d.x ?? d.targetX ?? 0;
+      const y = d.y ?? d.targetY ?? 0;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    });
+
+    // Add margin around nodes
+    const padding = 60;
+    const graphWidth = Math.max(100, maxX - minX + padding * 2);
+    const graphHeight = Math.max(100, maxY - minY + padding * 2);
+
+    const scale = Math.max(0.08, Math.min(1.2, Math.min(containerWidth / graphWidth, containerHeight / graphHeight)));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    const translateX = containerWidth / 2 - centerX * scale;
+    const translateY = containerHeight / 2 - centerY * scale;
+
+    const transform = d3.zoomIdentity.translate(translateX, translateY).scale(scale);
+    d3.select(svgRef.current).transition().duration(400).call(zoomBehaviorRef.current.transform, transform);
   };
 
   const totalTestedCount = nodes.filter((n) => n.status === 'tested').length;
@@ -828,7 +860,7 @@ export default function GraphView({
         <button
           onClick={handleReorganizeLayout}
           className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
-          title="Re-align DAG nodes to orderly topological layers"
+          title="Re-align DAG nodes to hierarchical functional tree structure"
         >
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
@@ -836,6 +868,15 @@ export default function GraphView({
 
       {/* Floating Zoom Controls */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-1 bg-slate-900/90 backdrop-blur p-1 rounded-lg border border-slate-800 shadow-xl text-xs">
+        <button
+          onClick={handleFitView}
+          className="px-2 py-1 text-sky-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer flex items-center gap-1 font-mono text-[11px] font-medium"
+          title="Auto-Fit all nodes into screen view (essential for 150-node DAG)"
+        >
+          <Scan className="w-3.5 h-3.5" />
+          <span>Fit DAG ({filteredNodes.length})</span>
+        </button>
+        <div className="h-4 w-px bg-slate-800 my-auto" />
         <button
           onClick={() => handleZoom(1.3)}
           className="p-1.5 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
@@ -853,7 +894,7 @@ export default function GraphView({
         <button
           onClick={handleResetZoom}
           className="p-1.5 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
-          title="Reset Zoom"
+          title="Reset Zoom (1:1)"
         >
           <Maximize2 className="w-4 h-4" />
         </button>

@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MigrationConfig, MigrationTrigger, Node, ProjectConfig } from '../types';
+import { fetchModalStatus, ModalStatusInfo } from '../utils/modalClient';
 import {
   Play,
   Pause,
@@ -15,7 +16,13 @@ import {
   ChevronRight,
   Download,
   Layers,
-  Sparkles
+  Sparkles,
+  CloudLightning,
+  Monitor,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  Info
 } from 'lucide-react';
 
 interface ControlsBarProps {
@@ -62,6 +69,27 @@ export default function ControlsBar({
   buildingBlocksCount = 17,
 }: ControlsBarProps) {
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [modalStatus, setModalStatus] = useState<ModalStatusInfo | null>(null);
+  const [isCheckingModal, setIsCheckingModal] = useState(false);
+
+  // Probe modal status when settings modal is opened
+  useEffect(() => {
+    if (showConfigModal && !modalStatus && !isCheckingModal) {
+      handleTestModal();
+    }
+  }, [showConfigModal]);
+
+  const handleTestModal = async () => {
+    setIsCheckingModal(true);
+    try {
+      const res = await fetchModalStatus();
+      setModalStatus(res);
+    } catch {
+      // Ignored
+    } finally {
+      setIsCheckingModal(false);
+    }
+  };
 
   // Compute node statistics
   const total = nodes.length;
@@ -75,10 +103,10 @@ export default function ControlsBar({
   const progressPercent = Math.round((completedCount / total) * 100);
 
   return (
-    <div className="bg-slate-900/95 border-b border-slate-800 px-4 py-2.5 sticky top-0 z-30 shadow-xl backdrop-blur">
+    <div className="bg-slate-900/95 border-b border-slate-800 px-4 py-2 sticky top-0 z-30 shadow-xl backdrop-blur">
       {/* Scheduled start countdown banner */}
       {scheduledCountdown !== null && (
-        <div className="mb-3 p-2.5 bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-500/40 rounded-lg flex items-center justify-between text-xs text-amber-200 animate-pulse">
+        <div className="mb-2.5 p-2 bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-500/40 rounded-lg flex items-center justify-between text-xs text-amber-200 animate-pulse">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-amber-400" />
             <span>
@@ -104,14 +132,14 @@ export default function ControlsBar({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 min-h-[40px]">
         {/* Left Side: Primary Execution Controls */}
         <div className="flex items-center gap-2 flex-wrap">
           {/* Main Start / Pause / Resume Button (Default Agentic Migration) */}
           {!isRunning ? (
             <button
               onClick={onStartMigration}
-              className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg font-medium text-xs flex items-center gap-2 shadow-lg shadow-emerald-950/60 transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] border border-emerald-400/30"
+              className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg font-medium text-xs flex items-center gap-2 shadow-lg shadow-emerald-950/60 transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] border border-emerald-400/30"
               title="Launch autonomous Agentic Migration across the Mathematical DAG"
             >
               <Sparkles className="w-4 h-4 text-emerald-200 fill-emerald-400/20" />
@@ -120,7 +148,7 @@ export default function ControlsBar({
           ) : isPaused ? (
             <button
               onClick={onResumeMigration}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-medium text-xs flex items-center gap-2 shadow-lg shadow-amber-950/60 transition-all cursor-pointer"
+              className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-medium text-xs flex items-center gap-2 shadow-lg shadow-amber-950/60 transition-all cursor-pointer"
             >
               <Sparkles className="w-4 h-4 text-amber-200" />
               <span>Resume Agentic Migration</span>
@@ -128,7 +156,7 @@ export default function ControlsBar({
           ) : (
             <button
               onClick={onPauseMigration}
-              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium text-xs flex items-center gap-2 shadow-lg transition-all cursor-pointer"
+              className="px-3.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium text-xs flex items-center gap-2 shadow-lg transition-all cursor-pointer"
             >
               <Pause className="w-4 h-4" />
               <span>Pause</span>
@@ -139,7 +167,7 @@ export default function ControlsBar({
           <button
             onClick={onStepNextNode}
             disabled={isRunning && !isPaused}
-            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
             title="Translate & test next unmigrated node in DAG topological order"
           >
             <StepForward className="w-3.5 h-3.5 text-sky-400" />
@@ -149,7 +177,7 @@ export default function ControlsBar({
           {/* Reset Pipeline & Clean Files */}
           <button
             onClick={onResetMigration}
-            className="px-3 py-2 bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-300 rounded-lg text-xs font-medium flex items-center gap-1.5 border border-slate-700 hover:border-rose-800/60 transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-300 rounded-lg text-xs font-medium flex items-center gap-1.5 border border-slate-700 hover:border-rose-800/60 transition-colors cursor-pointer"
             title="Reset DAG state to unmigrated baseline and delete generated library files"
           >
             <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
@@ -157,7 +185,7 @@ export default function ControlsBar({
           </button>
 
           {/* Trigger Mode Selector ("When to start") */}
-          <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs">
+          <div className="flex items-center gap-1.5 bg-slate-950 px-2 py-1.5 rounded-lg border border-slate-800 text-xs">
             <span className="text-slate-400 text-[11px] font-medium flex items-center gap-1">
               <Clock className="w-3 h-3 text-sky-400" /> Trigger:
             </span>
@@ -173,8 +201,36 @@ export default function ControlsBar({
             </select>
           </div>
 
+          {/* Execution Mode Slider: Run locally vs Modal */}
+          <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+            <button
+              onClick={() => onChangeConfig({ executionMode: 'local' })}
+              className={`px-2 py-1 rounded text-[11px] font-mono flex items-center gap-1 transition-colors cursor-pointer ${
+                (config.executionMode || 'local') === 'local'
+                  ? 'bg-slate-800 text-slate-100 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Execute migration and unit test suite in local container sandbox"
+            >
+              <Monitor className="w-3 h-3 text-slate-400" />
+              <span>Run locally</span>
+            </button>
+            <button
+              onClick={() => onChangeConfig({ executionMode: 'modal' })}
+              className={`px-2.5 py-1 rounded text-[11px] font-mono flex items-center gap-1 transition-all cursor-pointer ${
+                config.executionMode === 'modal'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold shadow-sm border border-emerald-400/40'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Dispatch parallel compilation, GPU parity tests, and autograd across Modal serverless cloud workers"
+            >
+              <CloudLightning className="w-3 h-3 text-emerald-300" />
+              <span>Modal</span>
+            </button>
+          </div>
+
           {/* Speed Selector */}
-          <div className="flex items-center gap-1 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs">
+          <div className="flex items-center gap-1 bg-slate-950 px-2 py-1.5 rounded-lg border border-slate-800 text-xs">
             <span className="text-slate-400 text-[11px] font-medium flex items-center gap-1">
               <Flame className="w-3 h-3 text-amber-400" /> Speed:
             </span>
@@ -196,7 +252,7 @@ export default function ControlsBar({
           {/* Migrated Files Explorer Button */}
           <button
             onClick={onOpenFilesDrawer}
-            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-mono flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-mono flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
             title="Preview files, folder structure, getting-started guide, and download .zip repo"
           >
             <Package className="w-3.5 h-3.5 text-emerald-400" />
@@ -211,7 +267,7 @@ export default function ControlsBar({
           {onOpenBuildingBlocks && (
             <button
               onClick={onOpenBuildingBlocks}
-              className="px-3 py-2 bg-indigo-950/70 hover:bg-indigo-900 text-indigo-200 rounded-lg text-xs font-mono flex items-center gap-1.5 border border-indigo-700/60 transition-colors cursor-pointer"
+              className="px-2.5 py-1.5 bg-indigo-950/70 hover:bg-indigo-900 text-indigo-200 rounded-lg text-xs font-mono flex items-center gap-1.5 border border-indigo-700/60 transition-colors cursor-pointer"
               title="Inspect and edit deterministic type and math building blocks"
             >
               <Layers className="w-3.5 h-3.5 text-indigo-400" />
@@ -222,10 +278,29 @@ export default function ControlsBar({
             </button>
           )}
 
+          {/* Switch Codebase / Archetype Preset Trigger */}
+          <button
+            onClick={onSwitchRepository}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-mono flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
+            title="Switch codebase archetype or reload preset (Ultra-Deep 150-Node DAG, Distributed Pipeline, Heston, etc.)"
+          >
+            <FolderGit2 className="w-3.5 h-3.5 text-sky-400" />
+            <span className="hidden md:inline">Archetype:</span>
+            <span className="text-sky-300 font-semibold truncate max-w-[120px]">
+              {nodes.length >= 100
+                ? 'Ultra-Deep (150)'
+                : nodes.length >= 25
+                ? 'Distributed (28)'
+                : nodes.length === 18
+                ? 'Heston (18)'
+                : 'European (16)'}
+            </span>
+          </button>
+
           {/* Settings Trigger */}
           <button
             onClick={() => setShowConfigModal(!showConfigModal)}
-            className={`p-2 rounded-lg border transition-colors cursor-pointer ${
+            className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
               showConfigModal
                 ? 'bg-sky-500/20 text-sky-300 border-sky-500/50'
                 : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
@@ -236,56 +311,80 @@ export default function ControlsBar({
           </button>
         </div>
 
-        {/* Right Side: Migration Progress & Active Node Badge */}
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Active node pill */}
-          {isRunning && activeNode && (
-            <div className="flex items-center gap-2 px-3 py-1 bg-sky-950/80 border border-sky-500/40 rounded-full text-xs font-mono text-sky-300 animate-pulse">
-              <span className="w-2 h-2 rounded-full bg-sky-400"></span>
-              <span>Translating: {activeNode.ql_symbol}</span>
-            </div>
-          )}
+        {/* Right Side: Migration Progress & Active Node Badge - Rock-solid stable layout, zero layout shifts */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {/* Stable Active Node Pill: strictly fixed width & height so it NEVER pushes sibling labels or wraps */}
+          <div className="w-48 sm:w-56 h-7 shrink-0 flex items-center">
+            {isRunning && activeNode ? (
+              <div
+                className="w-full h-full flex items-center gap-1.5 px-2.5 bg-sky-950/80 border border-sky-500/40 rounded-lg text-xs font-mono text-sky-300 shadow-sm overflow-hidden"
+                title={`Translating symbol: ${activeNode.ql_symbol}`}
+              >
+                <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse shrink-0"></span>
+                <span className="text-[10px] uppercase font-bold text-sky-400 shrink-0">Translating:</span>
+                <span className="truncate text-sky-200 font-medium">{activeNode.ql_symbol}</span>
+              </div>
+            ) : (
+              <div className="w-full h-full flex items-center gap-1.5 px-2.5 bg-slate-950/40 border border-slate-800/80 rounded-lg text-xs font-mono text-slate-500 overflow-hidden">
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    isPaused ? 'bg-amber-400' : isRunning ? 'bg-sky-400 animate-ping' : 'bg-slate-600'
+                  }`}
+                ></span>
+                <span className="truncate text-[11px] text-slate-400">
+                  {isPaused
+                    ? 'Migration Paused'
+                    : isRunning
+                    ? 'Selecting AST node...'
+                    : completedCount === total
+                    ? 'DAG Migrated (100%)'
+                    : 'Pipeline Idle'}
+                </span>
+              </div>
+            )}
+          </div>
 
-          {/* Status Breakdown Pills */}
-          <div className="flex items-center gap-1.5 text-[11px] font-mono">
-            <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60" title="Tested & verified">
+          {/* Status Breakdown Pills with tabular-nums and fixed minimum widths to prevent digit shifts */}
+          <div className="flex items-center gap-1 text-[11px] font-mono shrink-0">
+            <span
+              className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 tabular-nums min-w-[62px] text-center"
+              title="Tested & verified"
+            >
               Tested: {testedCount}
             </span>
-            <span className="px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/60" title="Transpiled to PyTorch">
+            <span
+              className="px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/60 tabular-nums min-w-[58px] text-center"
+              title="Transpiled to PyTorch"
+            >
               Trans: {translatedCount}
             </span>
-            <span className="px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-800/60" title="AST mapped">
+            <span
+              className="px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-800/60 tabular-nums min-w-[64px] text-center"
+              title="AST mapped"
+            >
               Mapped: {mappedCount}
             </span>
-            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700" title="Pending translation">
+            <span
+              className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 tabular-nums min-w-[52px] text-center"
+              title="Pending translation"
+            >
               Todo: {todoCount}
             </span>
           </div>
 
-          {/* Overall Progress Bar */}
-          <div className="w-28 sm:w-36 flex flex-col gap-1">
-            <div className="flex justify-between text-[11px] font-mono text-slate-400">
+          {/* Overall Progress Bar with shrink-0 and tabular-nums */}
+          <div className="w-24 sm:w-28 flex flex-col gap-1 shrink-0">
+            <div className="flex justify-between text-[10px] font-mono text-slate-400">
               <span>MIGRATED</span>
-              <span className="text-slate-200 font-semibold">{progressPercent}%</span>
+              <span className="text-slate-200 font-semibold tabular-nums">{progressPercent}%</span>
             </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+            <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-sky-500 to-emerald-500 transition-all duration-300 rounded-full"
                 style={{ width: `${progressPercent}%` }}
               ></div>
             </div>
           </div>
-
-          {/* Switch Repo Button */}
-          <button
-            onClick={onSwitchRepository}
-            className="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/60 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-mono flex items-center gap-1 transition-colors cursor-pointer"
-            title="Change Source Git Repo or Target Architecture"
-          >
-            <FolderGit2 className="w-3.5 h-3.5 text-sky-400" />
-            <span className="hidden sm:inline">Repo</span>
-            <ChevronRight className="w-3 h-3 text-slate-500" />
-          </button>
         </div>
       </div>
 
@@ -399,11 +498,103 @@ export default function ControlsBar({
             {/* Hardware Acceleration Target */}
             <div className="space-y-2 p-3 bg-slate-900 rounded-lg border border-slate-800">
               <span className="font-semibold text-indigo-400 uppercase text-[11px] tracking-wider block">
-                3. Execution Device & Concurrency
+                3. Execution Device & Compute Backend
               </span>
               <p className="text-slate-400 text-[11px]">
-                Target device placement for PyTorch vectorized kernels and batch pricing.
+                Target device placement for vectorized kernels and parallel execution environment.
               </p>
+              
+              {/* Execution backend slider */}
+              <div className="flex items-center gap-2 p-2 bg-slate-950 rounded-lg border border-slate-800 mb-2">
+                <span className="text-xs text-slate-300 font-mono flex-1">Compute Backend:</span>
+                <button
+                  type="button"
+                  onClick={() => onChangeConfig({ executionMode: 'local' })}
+                  className={`px-3 py-1 rounded text-xs font-mono transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    (config.executionMode || 'local') === 'local'
+                      ? 'bg-slate-800 text-white border border-slate-700'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>Run locally</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangeConfig({ executionMode: 'modal' })}
+                  className={`px-3 py-1 rounded text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    config.executionMode === 'modal'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm border border-emerald-400/50'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <CloudLightning className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Modal Cloud</span>
+                </button>
+              </div>
+
+              {/* Modal Cloud Diagnostics & Credit Explanation */}
+              {config.executionMode === 'modal' && (
+                <div className="p-2.5 bg-slate-950/80 border border-slate-800 rounded-lg space-y-2 mb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-slate-200 font-mono text-[11px] font-semibold">
+                      <CloudLightning className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Modal Serverless Worker Status</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleTestModal}
+                      disabled={isCheckingModal}
+                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[10px] font-mono flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isCheckingModal ? 'animate-spin' : ''}`} />
+                      <span>{isCheckingModal ? 'Pinging...' : 'Test Connection'}</span>
+                    </button>
+                  </div>
+
+                  {modalStatus ? (
+                    <div className="space-y-1 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        {modalStatus.isLive ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        )}
+                        <span className={modalStatus.isLive ? 'text-emerald-300 font-medium' : 'text-amber-300 font-medium'}>
+                          {modalStatus.isLive
+                            ? 'Live Cloud Worker Active (Credits will be deducted from your Modal account)'
+                            : 'Local Distributed Sandbox Active (0 Modal credits deducted)'}
+                        </span>
+                      </div>
+                      <p className="text-slate-400 text-[10px] leading-relaxed pl-5 font-mono">
+                        {modalStatus.message}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-slate-500 text-[10px] font-mono">
+                      Checking status of remote Modal cloud worker...
+                    </p>
+                  )}
+
+                  <div className="pt-1 border-t border-slate-800/80 text-[10px] text-slate-400 space-y-1">
+                    <div className="flex items-start gap-1">
+                      <Info className="w-3 h-3 text-sky-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="text-slate-300 font-semibold">Why aren't Modal credits deducted?</span>
+                        <p className="text-slate-400 mt-0.5">
+                          When the target webhook URL returns 404 (i.e. <code className="text-sky-300">modal_worker.py</code> hasn't been deployed to your Modal account yet), the app safely uses its built-in local distributed runner so migrations never fail. To bill against your live Modal compute credits:
+                        </p>
+                        <ol className="list-decimal list-inside text-slate-400 font-mono text-[9px] mt-1 space-y-0.5 pl-1">
+                          <li>Run <span className="text-emerald-300">modal deploy modal_worker.py</span> in your terminal</li>
+                          <li>Copy your generated Modal web endpoint URL</li>
+                          <li>Set <span className="text-amber-300">MODAL_WEBHOOK_URL</span> in your environment secrets</li>
+                        </ol>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center gap-2 pt-1">
                 {(['cuda', 'cpu', 'mps'] as const).map((dev) => (
                   <button

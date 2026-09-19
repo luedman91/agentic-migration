@@ -75,19 +75,20 @@ export interface UnitTestResult {
   torchActual: string;
   errorMessage?: string;
   lastRunAt?: string;
+  durationMs?: number;
 }
 
 export interface MigratedFile {
   id: string;
   path: string;
-  nodeId: string;
-  symbol: string;
-  sizeBytes: number;
-  linesCount: number;
-  isTest: boolean;
-  shippable: boolean;
+  nodeId?: string;
+  symbol?: string;
+  sizeBytes?: number;
+  linesCount?: number;
+  isTest?: boolean;
+  shippable?: boolean;
   content: string;
-  createdAt: string;
+  createdAt?: string;
 }
 
 export interface ProjectConfig {
@@ -99,9 +100,11 @@ export interface ProjectConfig {
   targetFramework: 'PyTorch' | 'JAX' | 'TensorFlow' | 'Triton';
   targetDevice: 'cpu' | 'cuda' | 'mps';
   precision: 'float64' | 'mixed_precision';
-  oracleEngine: string;
+  oracleEngine?: string;
   sourceLibraryName?: string; // e.g. 'QuantLib', 'Sundials', 'OpenFOAM', 'BLAS/LAPACK'
   targetLibraryName?: string; // e.g. 'torch_quantlib', 'jax_sim', 'torch_sundials'
+  executionMode?: 'local' | 'modal' | 'agent';
+  presetId?: string; // e.g. 'massive_enterprise_150_dag', 'deep_distributed_pipeline', etc.
 }
 
 export type MigrationTrigger = 'manual' | 'on_dependency' | 'scheduled' | 'continuous';
@@ -115,6 +118,7 @@ export interface MigrationConfig {
   stopOnFailure: boolean;
   targetDevice: 'cpu' | 'cuda' | 'mps';
   useAgentEngine?: boolean; // Whether to run hybrid AI agent mode
+  executionMode?: 'local' | 'modal' | 'agent'; // Local container vs. Modal serverless cloud compute vs. agent
 }
 
 export type BuildingBlockCategory = 'primitive' | 'math_op' | 'container' | 'domain_object';

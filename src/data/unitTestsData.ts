@@ -1088,4 +1088,88 @@ export const hestonUnitTests: UnitTestResult[] = [
   }
 ];
 
+export const deepPipelineUnitTests: UnitTestResult[] = [
+  {
+    id: 'test_modal_proto_buffer_zero_copy',
+    name: 'test_modal_protobuf_zero_copy_memory_layout',
+    suite: 'I/O & Memory Deserialization',
+    category: 'target_library',
+    shippable: true,
+    targetNodeId: 'm_1',
+    targetSymbol: 'ProtobufMessageBuffer',
+    status: 'passed',
+    tolerance: 1e-15,
+    maxObservedDiff: 0.0,
+    quantLibExecutionTimeMs: 85.0,
+    torchExecutionTimeMs: 1.8,
+    speedup: 47.2,
+    assertionsCount: 50000,
+    sampleInput: 'raw_payload = bytes(100_000_000) binary packet arena',
+    qlExpected: 'C++ zero-copy memoryview matches byte-for-byte with PyTorch GPU tensor buffer',
+    torchActual: 'Passed: 100MB buffer mapped directly to CUDA unified memory in 1.8ms on Modal worker',
+    lastRunAt: '2026-09-19 11:20:00'
+  },
+  {
+    id: 'test_modal_cross_correlation_matrix',
+    name: 'test_modal_cross_correlation_gpu_parity',
+    suite: 'High-Dimensional Statistics',
+    category: 'oracle_parity',
+    shippable: false,
+    targetNodeId: 'm_12',
+    targetSymbol: 'CrossCorrelationMatrix',
+    status: 'pending',
+    tolerance: 1e-10,
+    maxObservedDiff: 2.1e-15,
+    quantLibExecutionTimeMs: 380.0,
+    torchExecutionTimeMs: 3.2,
+    speedup: 118.75,
+    assertionsCount: 100000,
+    sampleInput: '10,000 observations across 256 asset feeds',
+    qlExpected: 'C++ BLAS dgemm correlation matrix',
+    torchActual: 'PyTorch CUDA tensor core dot product on Modal A10G',
+    lastRunAt: undefined
+  },
+  {
+    id: 'test_modal_parallel_monte_carlo_5m',
+    name: 'test_modal_massively_parallel_monte_carlo_sobol',
+    suite: 'Serverless Simulation Scaling',
+    category: 'integration',
+    shippable: true,
+    targetNodeId: 'm_23',
+    targetSymbol: 'RiskScenarioMonteCarlo',
+    status: 'pending',
+    tolerance: 1e-6,
+    maxObservedDiff: 0.0,
+    quantLibExecutionTimeMs: 2400.0,
+    torchExecutionTimeMs: 18.5,
+    speedup: 129.7,
+    assertionsCount: 5000000,
+    sampleInput: '5,000,000 Sobol paths across 32 Modal serverless workers in parallel',
+    qlExpected: 'Sequential C++ single-thread: 2.4s execution',
+    torchActual: 'Modal parallel map: 18.5ms over distributed GPU cluster',
+    lastRunAt: undefined
+  },
+  {
+    id: 'test_modal_e2e_full_pipeline',
+    name: 'test_modal_10_level_dag_full_e2e_pipeline',
+    suite: 'Multi-Level Distributed Integration',
+    category: 'integration',
+    shippable: true,
+    targetNodeId: 'm_28',
+    targetSymbol: 'GlobalSystemCoordinator',
+    status: 'pending',
+    tolerance: 1e-8,
+    maxObservedDiff: 0.0,
+    quantLibExecutionTimeMs: 4200.0,
+    torchExecutionTimeMs: 34.0,
+    speedup: 123.5,
+    assertionsCount: 250000,
+    sampleInput: 'Full 28-node DAG: Protobuf Ingest -> HNSW Graph -> Autograd VJP -> EKF -> CVaR 99%',
+    qlExpected: 'Full C++ legacy pipeline latency: 4.2s per event epoch',
+    torchActual: 'Modal distributed execution latency: 34ms end-to-end',
+    lastRunAt: undefined
+  }
+];
+
 export const initialUnitTests: UnitTestResult[] = europeanUnitTests;
+

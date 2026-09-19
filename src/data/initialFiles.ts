@@ -749,3 +749,5 @@ def test_jit_tracing_parity():
 `
   }
 ];
+
+export const initialFiles: MigratedFile[] = initialMigratedFiles;

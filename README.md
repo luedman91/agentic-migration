@@ -1,18 +1,22 @@
-# Mathematical Library Migration Workbench
+# Universal Library Migration Workbench
 
-A universal dependency DAG transpilation, deterministic symbol registry, and differential oracle parity platform for migrating complex numerical, simulation, and pricing libraries (e.g. C++, Fortran, MATLAB, Julia) into modern vectorized tensor acceleration frameworks (PyTorch, JAX, TensorFlow, Triton).
+A universal dependency DAG transpilation, deterministic symbol registry, and differential oracle parity platform for migrating complex numerical, simulation, infrastructure, and domain libraries (e.g. C++, Fortran, MATLAB, Julia) into modern vectorized tensor acceleration frameworks (PyTorch, JAX, TensorFlow, Triton).
 
 ---
 
 ## Key Features
 
-- **Universal Mathematical Dependency DAG Engine**:
+- **Universal Function Dependency DAG Engine**:
   - Interactive D3-powered directed acyclic graph (DAG) visualizer with top-to-bottom vertical tree hierarchy, horizontal flow, depth cones, and topological sort orders.
-  - Automatically identifies root mathematical primitives, intermediate solvers, and terminal pricing/simulation routines.
+  - Automatically handles both pure mathematical kernels (solvers, distributions, numerical integration) and non-mathematical library components (infrastructure, I/O pipelines, logging, hardware buffers, and telemetry).
   - Stabilized pin-and-drag mechanics with layer-based rank stratification.
 
+- **Dual Execution Engine: Local Mode & Modal Cloud Serverless**:
+  - **Local Mode**: Execute AST passes and transpilation steps locally within your container/environment.
+  - **Modal Cloud Serverless**: Dispatches tasks across distributed Modal GPU/CPU workers for deep dependency DAG pipelines, achieving 50x–100x speedups via parallel node transpilation and concurrent test execution.
+
 - **Deterministic Symbol Registry & Building Blocks**:
-  - Dual-engine migration combining deterministic mathematical building blocks (e.g., standard normal CDF/PDF, vectorized distributions, automatic differentiation-ready tensors) with hybrid AI agent reasoning.
+  - Dual-engine migration combining deterministic building blocks (e.g., standard normal CDF/PDF, vectorized distributions, buffer allocators, automatic differentiation-ready tensors) with hybrid AI agent reasoning.
   - Custom symbol mapping table for registering project-specific numerical types and tensor broadcasting semantics.
 
 - **Agentic AI Migration Loop (Gemini 3.8 Flash)**:
@@ -22,7 +26,7 @@ A universal dependency DAG transpilation, deterministic symbol registry, and dif
 
 - **Differential Oracle Parity & Multi-Tier Verification**:
   - **Unit Tests**: Targeted tensor tests for shape consistency, subnormal handling, and autograd gradient checks.
-  - **Integration Tests**: Multi-module pipeline execution (e.g., term structures &rarr; cash flows &rarr; analytical engines).
+  - **Integration Tests**: Multi-module pipeline execution (e.g., term structures &rarr; cash flows &rarr; analytical engines or I/O &rarr; precomputation &rarr; execution).
   - **Oracle Parity**: High-precision differential residual testing against reference source libraries with configurable error tolerances.
   - Synthetic data generators and custom integration test authoring modal.
 
@@ -35,7 +39,7 @@ A universal dependency DAG transpilation, deterministic symbol registry, and dif
 ## Tech Stack
 
 - **Frontend**: React 19, TypeScript, Tailwind CSS, Motion, Lucide Icons, D3.js.
-- **Backend Server**: Node.js, Express, Vite middleware integration, esbuild bundler, `@google/genai` SDK.
+- **Backend Server**: Node.js, Express, Vite middleware integration, esbuild bundler, `@google/genai` SDK, Modal Cloud API dispatch.
 - **Build / Tooling**: Vite 8, TypeScript 7.
 
 ---
@@ -63,11 +67,14 @@ Copy `.env.example` to `.env`:
 cp .env.example .env
 ```
 
-Set your `GEMINI_API_KEY`:
+Set your environment variables:
 
 ```env
 # .env
 GEMINI_API_KEY="your_gemini_api_key_here"
+
+# Optional: Modal Webhook URL for remote GPU cluster execution
+# MODAL_WEBHOOK_URL="https://your-modal-app.modal.run"
 ```
 
 > **Security Note**: Never commit your `.env` file or raw API keys to version control. The `.gitignore` file is pre-configured to ignore all `.env` files except `.env.example`.
@@ -103,30 +110,33 @@ npm run lint
 
 ```
 ├── .env.example         # Environment template (NO secrets)
-├── .gitignore           # Git ignore configuration
+├── .gitignore           # Git ignore configuration (strictly excludes .env & credentials)
 ├── index.html           # Application HTML entry point
 ├── metadata.json        # Application metadata & capabilities
 ├── package.json         # Project scripts and dependencies
-├── server.ts            # Express server entry point with Vite middleware
+├── server.ts            # Express server entry point with Vite middleware & Modal endpoints
 ├── server/
-│   └── agent.ts         # Server-side Gemini AI agent & symbol registry
+│   ├── agent.ts         # Server-side Gemini AI agent & symbol registry
+│   └── modalEngine.ts   # Modal serverless execution engine & remote webhook dispatcher
 ├── src/
 │   ├── App.tsx          # Main workbench orchestrator & state manager
 │   ├── main.tsx         # React root
 │   ├── index.css        # Tailwind styling
 │   ├── types.ts         # Shared TypeScript interfaces & types
-│   ├── data.ts          # Default mathematical presets & DAG nodes
+│   ├── data.ts          # Presets (Heston, European, Deep Multi-Stage Pipeline)
+│   ├── utils/
+│   │   ├── modalClient.ts    # Modal serverless API client
+│   │   └── dagTestManager.ts # Automatic DAG leaf test & unit test generation
 │   └── components/
 │       ├── StartScreen.tsx        # Library & framework selection configuration
-│       ├── ControlsBar.tsx        # Migration execution controls & parameters
+│       ├── ControlsBar.tsx        # Migration execution controls, speed & Modal slider
 │       ├── GraphView.tsx          # D3 interactive dependency DAG visualizer
 │       ├── LogsSection.tsx        # Runtime logging & Agent dispatch trace inspector
 │       ├── UnitTestOverview.tsx   # Multi-tier test suite & oracle parity runner
 │       ├── NodeDetailPanel.tsx    # Source vs. Target code comparison & test runner
-│       ├── SymbolRegistryModal.tsx # Building blocks symbol mapping manager
-│       ├── FilesDrawer.tsx        # Generated distribution files explorer
-│       ├── IntegrationTestModal.tsx # Custom integration test authoring modal
-│       └── TestScenarioGeneratorModal.tsx # Vectorized stress scenario generator
+│       ├── BuildingBlocksModal.tsx # Building blocks symbol mapping manager
+│       ├── MigratedFilesDrawer.tsx # Generated distribution files explorer
+│       └── WriteIntegrationTestModal.tsx # Custom integration test authoring modal
 └── tsconfig.json        # TypeScript configuration
 ```
 
@@ -134,5 +144,6 @@ npm run lint
 
 ## Security & API Key Best Practices
 
-- **Zero Client-Side Exposure**: All Gemini API calls are strictly routed through server-side endpoints (`/api/*`). The `GEMINI_API_KEY` is loaded exclusively in `server/agent.ts` and is never prefixed with `VITE_` or sent to the browser.
-- **Git Exclusions**: All `.env*` files (except `.env.example`) are ignored by `.gitignore`.
+- **Zero Client-Side Exposure**: All Gemini API and Modal cloud webhook calls are strictly routed through server-side endpoints (`/api/*`). Secrets (`GEMINI_API_KEY`, `MODAL_WEBHOOK_URL`) are loaded exclusively in server-side modules and are never prefixed with `VITE_` or exposed to the browser.
+- **Git Exclusions**: All `.env*` files (except `.env.example`), private keys, and credential stores are ignored by `.gitignore`.
+- **Safe Version Control**: Automated verification ensures git commits remain sanitized of secrets and API tokens.

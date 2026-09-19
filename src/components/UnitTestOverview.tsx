@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { UnitTestResult, TestStatus, UnitTestCategory, Node } from '../types';
+import { areSymbolsEquivalent } from '../config/appConfig';
 import {
   CheckCircle2,
   XCircle,
@@ -516,9 +517,9 @@ export default function UnitTestOverview({
                           <Layers className="w-3 h-3 text-purple-400 shrink-0" />
                           <span className="text-slate-400 mr-0.5">Pipeline Tree:</span>
                           {test.integrationModules.map((mod, i) => {
-                            const modNode = nodes.find((n) => n.ql_symbol === mod);
+                            const modNode = nodes.find((n) => areSymbolsEquivalent(n.ql_symbol, mod));
                             const isTested = modNode?.status === 'tested' || unitTests.some(
-                              (t) => (t.targetSymbol === mod || t.targetNodeId === modNode?.id) && t.status === 'passed'
+                              (t) => (areSymbolsEquivalent(t.targetSymbol, mod) || t.targetNodeId === modNode?.id) && t.status === 'passed'
                             );
 
                             return (

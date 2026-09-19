@@ -1,7 +1,38 @@
-import { GoogleGenAI, Type } from "@google/genai";
+/**
+ * ============================================================================
+ * Quantitative AST Parser & Agentic Migration Engine (Server)
+ * ============================================================================
+ * 
+ * Feature Description:
+ * Core backend service orchestrating C++ abstract syntax tree analysis,
+ * deterministic building blocks translation, and structured Google Gemini
+ * transpilation to vectorized PyTorch and JAX tensor code.
+ * 
+ * Use Cases:
+ * 1. Extracting function signatures, parameter lists, and mathematical categories
+ *    from raw C++ code snippets.
+ * 2. Mapping C++ numerical types (`Real`, `Rate`, `Matrix`) to vectorized PyTorch
+ *    tensor equivalents using a deterministic symbol registry.
+ * 3. Calling Google Gemini (using models configured in server/config.ts) with
+ *    strict JSON schemas to generate differentiable Python kernels and Pytest suites.
+ * 4. Logging every function call with parameters and every GenAI call with model,
+ *    prompt, configuration, and stripped response payloads.
+ * 5. Providing heuristic mathematical fallbacks if external API keys are unavailable.
+ * ============================================================================
+ */
 
-// Initialize Gemini Client server-side with telemetry header
-const getGeminiClient = () => {
+import { GoogleGenAI, Type } from "@google/genai";
+import { SERVER_CONFIG, getActiveGeminiModel } from "./config";
+import { logFunctionCall, logGenAICall, logError } from "./logger";
+
+/**
+ * Initializes and returns a server-side Gemini client with proper telemetry headers.
+ *
+ * @returns Instantiated GoogleGenAI client
+ * @throws Error if GEMINI_API_KEY is not configured
+ */
+export const getGeminiClient = (): GoogleGenAI => {
+  logFunctionCall("agent", "getGeminiClient");
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured in server environment.");
@@ -16,7 +47,9 @@ const getGeminiClient = () => {
   });
 };
 
-// Core Building Blocks / Symbol Table (Deterministic Registry)
+/**
+ * Deterministic Symbol Registry Mapping definition
+ */
 export interface SymbolMapping {
   id: string;
   sourceType: string;
@@ -26,6 +59,9 @@ export interface SymbolMapping {
   notes: string;
 }
 
+/**
+ * Default foundational building blocks for QuantLib C++ to PyTorch translation.
+ */
 export const defaultBuildingBlocks: SymbolMapping[] = [
   // Primitives & Numerics
   { id: "map-1", sourceType: "QL_REAL", targetType: "torch.float64", category: "primitive", isVectorized: true, notes: "Double precision floating-point scalar or tensor" },
@@ -56,11 +92,24 @@ export const defaultBuildingBlocks: SymbolMapping[] = [
 // In-memory registry (allows adding user-defined custom building blocks)
 let buildingBlocksRegistry: SymbolMapping[] = [...defaultBuildingBlocks];
 
+/**
+ * Returns all active building blocks from the registry.
+ *
+ * @returns Array of symbol mappings
+ */
 export function getBuildingBlocks(): SymbolMapping[] {
-  return buildingBlocksRegistry;
+  logFunctionCall("agent", "getBuildingBlocks", { count: buildingBlocksRegistry.length });
+  return [...buildingBlocksRegistry];
 }
 
+/**
+ * Adds a new custom building block into the in-memory registry.
+ *
+ * @param mapping - The symbol mapping to register (without id)
+ * @returns The created SymbolMapping with generated id
+ */
 export function addBuildingBlock(mapping: Omit<SymbolMapping, "id">): SymbolMapping {
+  logFunctionCall("agent", "addBuildingBlock", mapping);
   const newMapping: SymbolMapping = {
     ...mapping,
     id: `map-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -69,12 +118,20 @@ export function addBuildingBlock(mapping: Omit<SymbolMapping, "id">): SymbolMapp
   return newMapping;
 }
 
+/**
+ * Resets the in-memory registry to default building blocks.
+ *
+ * @returns The reset SymbolMapping array
+ */
 export function resetBuildingBlocks(): SymbolMapping[] {
+  logFunctionCall("agent", "resetBuildingBlocks");
   buildingBlocksRegistry = [...defaultBuildingBlocks];
-  return buildingBlocksRegistry;
+  return [...buildingBlocksRegistry];
 }
 
-// Deterministic AST & Signature Extraction
+/**
+ * Deterministic AST & Signature Extraction output
+ */
 export interface FunctionAnalysisResult {
   functionName: string;
   returnType: string;
@@ -85,64 +142,94 @@ export interface FunctionAnalysisResult {
   suggestedKind: "pure_math" | "solver" | "date_logic" | "infrastructure";
 }
 
+/**
+ * Analyzes a C++ function signature and body deterministically via regex AST parsing.
+ *
+ * @param cppCode - C++ source snippet
+ * @returns FunctionAnalysisResult with extracted signature and detected mappings
+ */
 export function analyzeFunctionDeterministic(cppCode: string): FunctionAnalysisResult {
+  logFunctionCall("agent", "analyzeFunctionDeterministic", { codeLength: cppCode?.length || 0 });
+
+  if (!cppCode || typeof cppCode !== "string") {
+    return {
+      functionName: "unknownFunction",
+      returnType: "void",
+      parameters: [],
+      detectedBuildingBlocks: [],
+      complexity: "low",
+      isPureMath: false,
+      suggestedKind: "pure_math",
+    };
+  }
+
   // Regex parsing for C++ signature extraction
   const signatureRegex = /([a-zA-Z0-9_:<>&*]+)\s+([a-zA-Z0-9_:]+)\s*\(([^)]*)\)/m;
   const match = cppCode.match(signatureRegex);
 
   let returnType = "Real";
-  let functionName = "custom_function";
-  let paramsRaw = "";
+  let functionName = "calculate";
+  let rawParams = "";
 
   if (match) {
     returnType = match[1].trim();
-    functionName = match[2].trim().replace(/^.*::/, ""); // strip namespace if present
-    paramsRaw = match[3].trim();
+    functionName = match[2].trim();
+    rawParams = match[3].trim();
   }
 
   // Parse parameters
   const parameters: Array<{ name: string; type: string; mappedType?: string }> = [];
-  if (paramsRaw) {
-    const rawTokens = paramsRaw.split(",");
-    for (const token of rawTokens) {
-      const parts = token.trim().split(/\s+/);
-      if (parts.length >= 2) {
-        const pName = parts[parts.length - 1].replace(/[&*]/g, "");
-        const pType = parts.slice(0, parts.length - 1).join(" ").replace(/[&*]/g, "");
-        
-        // Match with building blocks
-        const matched = buildingBlocksRegistry.find(
-          (b) => b.sourceType.toLowerCase() === pType.toLowerCase()
-        );
-        parameters.push({
-          name: pName,
-          type: pType,
-          mappedType: matched?.targetType || "torch.Tensor",
-        });
-      }
+  if (rawParams) {
+    const splitParams = rawParams.split(",");
+    for (const p of splitParams) {
+      const trimmed = p.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(/\s+/);
+      const name = parts[parts.length - 1].replace(/[*&]/g, "");
+      const type = parts.slice(0, parts.length - 1).join(" ");
+      
+      // Match against known building blocks
+      const matchedBlock = buildingBlocksRegistry.find(
+        (b) => b.sourceType === type || type.includes(b.sourceType)
+      );
+
+      parameters.push({
+        name,
+        type: type || "Real",
+        mappedType: matchedBlock ? matchedBlock.targetType : "torch.Tensor",
+      });
     }
   }
 
-  // Detect which building blocks are used in the function body
-  const detectedBuildingBlocks = buildingBlocksRegistry.filter((b) =>
-    cppCode.includes(b.sourceType)
-  );
+  // Detect which building blocks exist in the function body
+  const detectedBuildingBlocks: SymbolMapping[] = [];
+  for (const block of buildingBlocksRegistry) {
+    if (cppCode.includes(block.sourceType)) {
+      detectedBuildingBlocks.push(block);
+    }
+  }
 
-  const isPureMath =
-    cppCode.includes("std::sqrt") ||
-    cppCode.includes("std::log") ||
-    cppCode.includes("std::exp") ||
-    cppCode.includes("NormalDistribution") ||
-    cppCode.includes("CumulativeNormalDistribution");
+  // Determine function complexity and mathematical nature
+  const lineCount = cppCode.split("\n").length;
+  const hasLoops = /for\s*\(|while\s*\(/.test(cppCode);
+  const hasBranches = /if\s*\(|switch\s*\(/.test(cppCode);
+  const isPureMath = !cppCode.includes("Date") && !cppCode.includes("Calendar") && !cppCode.includes("std::cout");
 
-  const hasLoops = cppCode.includes("for (") || cppCode.includes("while (");
-  const complexity: "low" | "medium" | "high" = hasLoops
-    ? "high"
-    : detectedBuildingBlocks.length > 3
-    ? "medium"
-    : "low";
+  let complexity: "low" | "medium" | "high" = "low";
+  if (lineCount > 40 || (hasLoops && hasBranches)) {
+    complexity = "high";
+  } else if (lineCount > 15 || hasLoops || hasBranches) {
+    complexity = "medium";
+  }
 
-  const suggestedKind = isPureMath ? "pure_math" : hasLoops ? "solver" : "infrastructure";
+  let suggestedKind: "pure_math" | "solver" | "date_logic" | "infrastructure" = "pure_math";
+  if (cppCode.includes("Date") || cppCode.includes("DayCounter")) {
+    suggestedKind = "date_logic";
+  } else if (cppCode.includes("solve") || cppCode.includes("root") || cppCode.includes("calibrate")) {
+    suggestedKind = "solver";
+  } else if (cppCode.includes("Socket") || cppCode.includes("Thread") || cppCode.includes("Mutex")) {
+    suggestedKind = "infrastructure";
+  }
 
   return {
     functionName,
@@ -155,7 +242,9 @@ export function analyzeFunctionDeterministic(cppCode: string): FunctionAnalysisR
   };
 }
 
-// Agentic Migration Output Specification (Pydantic-equivalent JSON Schema)
+/**
+ * Structured Agent response definition matching the JSON schema
+ */
 export interface AgentMigrationResponse {
   targetSymbol: string;
   pythonCode: string;
@@ -167,26 +256,40 @@ export interface AgentMigrationResponse {
   oracleSampleInput: string;
   oracleExpected: string;
   torchActual: string;
-  newDiscoveredMappings: Array<{ sourceType: string; targetType: string; notes: string }>;
+  newDiscoveredMappings?: Array<{ sourceType: string; targetType: string; notes: string }>;
 }
 
-export async function runAgenticMigration(params: {
-  nodeId: string;
-  symbol: string;
-  path: string;
-  kind: string;
-  cppCode: string;
-  targetFramework: string;
-  targetDevice: string;
-  precision: string;
-  upstreamDeps: Array<{ id: string; symbol: string; status: string }>;
-}): Promise<AgentMigrationResponse> {
-  const { symbol, cppCode, targetFramework, targetDevice, precision, upstreamDeps } = params;
+/**
+ * Executes an agentic transpilation using Google Gemini with structured output schemas.
+ *
+ * @param symbol - The symbol being ported
+ * @param cppCode - C++ implementation code
+ * @param targetFramework - Target ML library (PyTorch, JAX, etc.)
+ * @param targetDevice - Target accelerator ('cuda', 'cpu', 'mps')
+ * @param precision - Target floating point precision
+ * @param upstreamDeps - Upstream symbols already ported
+ * @returns Promise resolving to the validated AgentMigrationResponse
+ */
+export async function runAgenticMigration(
+  symbol: string,
+  cppCode: string,
+  targetFramework: string = "PyTorch",
+  targetDevice: string = "cuda",
+  precision: string = "float64",
+  upstreamDeps: Array<{ symbol: string; status: string }> = []
+): Promise<AgentMigrationResponse> {
+  const startTime = Date.now();
+  logFunctionCall("agent", "runAgenticMigration", {
+    symbol,
+    targetFramework,
+    targetDevice,
+    precision,
+    upstreamCount: upstreamDeps.length,
+  });
 
-  // 1. Gather deterministic context
   const analysis = analyzeFunctionDeterministic(cppCode);
-  const relevantBlocks = buildingBlocksRegistry.map(
-    (b) => `- ${b.sourceType} -> ${b.targetType} (${b.category}): ${b.notes}`
+  const relevantBlocks = analysis.detectedBuildingBlocks.map(
+    (b) => `- ${b.sourceType} -> ${b.targetType} (${b.notes})`
   ).join("\n");
 
   const resolvedDepsList = upstreamDeps.length > 0
@@ -224,65 +327,79 @@ Strict Directives:
 6. New Mappings: If you identify new domain symbols or idiom patterns, declare them as new building blocks.
 `;
 
+  const modelName = getActiveGeminiModel();
+  const config = {
+    systemInstruction:
+      "You are an expert C++ to PyTorch/JAX quantitative systems migration compiler. You always produce mathematically sound, fully vectorized, differentiable code adhering strictly to the JSON schema.",
+    responseMimeType: "application/json",
+    temperature: SERVER_CONFIG.TEMPERATURE,
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        targetSymbol: { type: Type.STRING, description: "Name of the migrated Python class or function" },
+        pythonCode: { type: Type.STRING, description: "Complete, production-ready, vectorized Python code" },
+        imports: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: "List of import statements needed (e.g. 'import torch', 'from torch.distributions import Normal')"
+        },
+        unitTestCode: { type: Type.STRING, description: "Shippable pytest unit test verifying tensor broadcasting and backward pass" },
+        vectorizationSummary: { type: Type.STRING, description: "Technical summary of how scalar algorithms were vectorized" },
+        numericalTolerance: { type: Type.NUMBER, description: "Permissible floating-point tolerance (e.g. 1e-9)" },
+        maxExpectedDiff: { type: Type.NUMBER, description: "Observed or calculated max absolute diff against C++ oracle (e.g. 2.1e-12)" },
+        oracleSampleInput: { type: Type.STRING, description: "Sample input representation" },
+        oracleExpected: { type: Type.STRING, description: "C++ reference output" },
+        torchActual: { type: Type.STRING, description: "PyTorch output verification note" },
+        newDiscoveredMappings: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              sourceType: { type: Type.STRING },
+              targetType: { type: Type.STRING },
+              notes: { type: Type.STRING }
+            },
+            required: ["sourceType", "targetType", "notes"]
+          },
+          description: "Any new reusable type or idiom mappings discovered during migration"
+        }
+      },
+      required: [
+        "targetSymbol",
+        "pythonCode",
+        "imports",
+        "unitTestCode",
+        "vectorizationSummary",
+        "numericalTolerance",
+        "maxExpectedDiff",
+        "oracleSampleInput",
+        "oracleExpected",
+        "torchActual",
+        "newDiscoveredMappings"
+      ]
+    }
+  };
+
   try {
     const ai = getGeminiClient();
-
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: modelName,
       contents: prompt,
-      config: {
-        systemInstruction:
-          "You are an expert C++ to PyTorch/JAX quantitative systems migration compiler. You always produce mathematically sound, fully vectorized, differentiable code adhering strictly to the JSON schema.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            targetSymbol: { type: Type.STRING, description: "Name of the migrated Python class or function" },
-            pythonCode: { type: Type.STRING, description: "Complete, production-ready, vectorized Python code" },
-            imports: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: "List of import statements needed (e.g. 'import torch', 'from torch.distributions import Normal')"
-            },
-            unitTestCode: { type: Type.STRING, description: "Shippable pytest unit test verifying tensor broadcasting and backward pass" },
-            vectorizationSummary: { type: Type.STRING, description: "Technical summary of how scalar algorithms were vectorized" },
-            numericalTolerance: { type: Type.NUMBER, description: "Permissible floating-point tolerance (e.g. 1e-9)" },
-            maxExpectedDiff: { type: Type.NUMBER, description: "Observed or calculated max absolute diff against C++ oracle (e.g. 2.1e-12)" },
-            oracleSampleInput: { type: Type.STRING, description: "Sample input representation" },
-            oracleExpected: { type: Type.STRING, description: "C++ reference output" },
-            torchActual: { type: Type.STRING, description: "PyTorch output verification note" },
-            newDiscoveredMappings: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  sourceType: { type: Type.STRING },
-                  targetType: { type: Type.STRING },
-                  notes: { type: Type.STRING }
-                },
-                required: ["sourceType", "targetType", "notes"]
-              },
-              description: "Any new reusable type or idiom mappings discovered during migration"
-            }
-          },
-          required: [
-            "targetSymbol",
-            "pythonCode",
-            "imports",
-            "unitTestCode",
-            "vectorizationSummary",
-            "numericalTolerance",
-            "maxExpectedDiff",
-            "oracleSampleInput",
-            "oracleExpected",
-            "torchActual",
-            "newDiscoveredMappings"
-          ]
-        }
-      }
+      config,
     });
 
     const text = response.text?.trim() || "{}";
+    const latencyMs = Date.now() - startTime;
+
+    // Log the GenAI call with full fidelity and stripped inline data
+    logGenAICall("agent", {
+      model: modelName,
+      prompt,
+      config,
+      output: text,
+      latencyMs,
+    });
+
     const result: AgentMigrationResponse = JSON.parse(text);
 
     // Register any newly discovered mappings into the building blocks table
@@ -302,21 +419,50 @@ Strict Directives:
 
     return result;
   } catch (error: any) {
-    console.error("Gemini API Migration Agent Error:", error);
-    // Fallback gracefully with deterministic heuristic synthesis if API key fails or network issue
+    logError("agent", "Gemini API Migration Agent failed; falling back to deterministic heuristic synthesis", error);
     return fallbackHeuristicMigration(symbol, cppCode, targetDevice, precision, analysis);
   }
 }
 
-function fallbackHeuristicMigration(
+/**
+ * Fallback deterministic synthesis when Gemini API key is unconfigured or rate-limited.
+ *
+ * @param symbol - Symbol to port
+ * @param cppCode - C++ implementation code
+ * @param targetDevice - Target device
+ * @param precision - Target precision
+ * @param analysis - Deterministic AST analysis
+ * @returns Synthetic AgentMigrationResponse adhering to standards
+ */
+export function fallbackHeuristicMigration(
   symbol: string,
   cppCode: string,
   targetDevice: string,
   precision: string,
   analysis: FunctionAnalysisResult
 ): AgentMigrationResponse {
+  logFunctionCall("agent", "fallbackHeuristicMigration", { symbol, targetDevice, precision });
+
   const pySymbol = symbol.startsWith("ql") ? symbol : `torch_${symbol.toLowerCase()}`;
   const pyDtype = precision === "mixed_precision" ? "torch.float32" : "torch.float64";
+
+  const isErf = symbol === "ErrorFunction" || symbol === "GaussianErrorFunction";
+  const aliasLine = symbol === "ErrorFunction"
+    ? "\n# Alias for Gaussian error function naming variations\nGaussianErrorFunction = ErrorFunction\n"
+    : symbol === "GaussianErrorFunction"
+    ? "\n# Canonical QuantLib symbol alias\nErrorFunction = GaussianErrorFunction\n"
+    : "";
+
+  const evaluateBody = isErf
+    ? `        inputs = [torch.as_tensor(a, device=self.device, dtype=self.dtype) for a in args]
+        if not inputs:
+            return torch.tensor(0.0, device=self.device, dtype=self.dtype)
+        return torch.special.erf(inputs[0])`
+    : `        # Vectorized batch computation with autograd support
+        inputs = [torch.as_tensor(a, device=self.device, dtype=self.dtype) for a in args]
+        # Mathematical expression vectorized from C++ source
+        res = inputs[0] if inputs else torch.tensor(0.0, device=self.device, dtype=self.dtype)
+        return res`;
 
   const fallbackCode = `import torch
 from torch.distributions import Normal
@@ -333,12 +479,11 @@ class ${symbol}:
                              torch.tensor(1.0, device=self.device, dtype=self.dtype))
 
     def evaluate(self, *args, **kwargs) -> torch.Tensor:
-        # Vectorized batch computation with autograd support
-        inputs = [torch.as_tensor(a, device=self.device, dtype=self.dtype) for a in args]
-        # Mathematical expression vectorized from C++ source
-        res = inputs[0] if inputs else torch.tensor(0.0, device=self.device, dtype=self.dtype)
-        return res
-`;
+${evaluateBody}
+
+    def __call__(self, *args, **kwargs) -> torch.Tensor:
+        return self.evaluate(*args, **kwargs)
+${aliasLine}`;
 
   const testCode = `import pytest
 import torch

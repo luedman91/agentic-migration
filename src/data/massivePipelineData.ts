@@ -325,31 +325,91 @@ export function buildMassiveEnterpriseDAG(): Node[] {
       const item = def.nodes[nodeIdx];
       const nodeId = `L${layerIdx}_N${nodeIdx + 1}`;
 
-      // Assign organic tree-branching dependencies reflecting hierarchical function structure
+      // Assign authentic domain dependencies reflecting real quantitative finance architecture
+      // High-level composite and pricing engines have 2 to 5 multi-domain dependencies
       const deps: string[] = [];
-      if (layerIdx > 0 && prevLayerNodes.length > 0) {
-        if (layerIdx === LAYER_DEFINITIONS.length - 1 && nodeIdx === 0) {
-          // Node 0 in the top layer is the GlobalSystemLifecycleCoordinator (the root/apex of the tree).
-          // Connect to the major architectural branch heads from the previous layer
-          const branchHeads = prevLayerNodes.slice(0, Math.min(prevLayerNodes.length, 5)).map((n) => n.id);
-          deps.push(...branchHeads);
-        } else {
-          // Tree branching: Parent index clusters nodes into functional tree branches
+
+      if (layerIdx > 0) {
+        // 1. Primary domain parent from immediate preceding layer
+        if (prevLayerNodes.length > 0) {
           const parentRatio = (nodeIdx / Math.max(1, def.nodes.length - 1)) * (prevLayerNodes.length - 1);
           const primaryParentIdx = Math.floor(parentRatio);
           const primaryParent = prevLayerNodes[Math.min(primaryParentIdx, prevLayerNodes.length - 1)].id;
           deps.push(primaryParent);
 
-          // For internal nodes, selectively connect to adjacent branch sibling for cross-functional composite pipeline
-          if (nodeIdx % 2 === 1 && prevLayerNodes.length > 1) {
-            const secondaryParentIdx = (primaryParentIdx + 1) % prevLayerNodes.length;
-            const secondaryParent = prevLayerNodes[secondaryParentIdx].id;
-            if (!deps.includes(secondaryParent)) {
-              deps.push(secondaryParent);
-            }
+          // 2. Secondary domain parent from adjacent branch in previous layer
+          const secondaryParentIdx = (primaryParentIdx + 1) % prevLayerNodes.length;
+          const secondaryParent = prevLayerNodes[secondaryParentIdx].id;
+          if (!deps.includes(secondaryParent)) {
+            deps.push(secondaryParent);
           }
         }
+
+        // 3. Cross-layer quantitative domain dependencies (2 to 5 inputs per node)
+        // In real quantitative libraries, composite components draw from fundamental subsystems
+        if (layerIdx >= 2 && layerIdx <= 3) {
+          // Linear Algebra & Sobol depend on Layer 0 (Memory Arena / SIMD Allocator)
+          const l0Nodes = allNodes.filter((n) => n.id.startsWith('L0_'));
+          if (l0Nodes.length > 0) {
+            const l0Parent = l0Nodes[(nodeIdx * 2) % l0Nodes.length].id;
+            if (!deps.includes(l0Parent)) deps.push(l0Parent);
+          }
+        } else if (layerIdx === 4 || layerIdx === 5) {
+          // Yield Curves & Volatility Surfaces depend on Layer 1 (Math / Normal CDF) and Layer 2 (Spline Tridiagonal Solvers)
+          const l1Nodes = allNodes.filter((n) => n.id.startsWith('L1_'));
+          const l2Nodes = allNodes.filter((n) => n.id.startsWith('L2_'));
+          if (l1Nodes.length > 0) {
+            const l1Parent = l1Nodes[nodeIdx % l1Nodes.length].id;
+            if (!deps.includes(l1Parent)) deps.push(l1Parent);
+          }
+          if (l2Nodes.length > 0 && nodeIdx % 2 === 0) {
+            const l2Parent = l2Nodes[(nodeIdx + 1) % l2Nodes.length].id;
+            if (!deps.includes(l2Parent)) deps.push(l2Parent);
+          }
+        } else if (layerIdx === 6 || layerIdx === 7) {
+          // SDE Integrators & PDE Solvers depend on L2 (Linalg/Cholesky), L3 (Sobol), and L4/L5 (Yield & Vol)
+          const l2Nodes = allNodes.filter((n) => n.id.startsWith('L2_'));
+          const l3Nodes = allNodes.filter((n) => n.id.startsWith('L3_'));
+          const l4Nodes = allNodes.filter((n) => n.id.startsWith('L4_'));
+          if (l2Nodes.length > 0) deps.push(l2Nodes[nodeIdx % l2Nodes.length].id);
+          if (l3Nodes.length > 0 && layerIdx === 6) deps.push(l3Nodes[(nodeIdx + 2) % l3Nodes.length].id);
+          if (l4Nodes.length > 0 && layerIdx === 7) deps.push(l4Nodes[(nodeIdx + 1) % l4Nodes.length].id);
+        } else if (layerIdx >= 8 && layerIdx <= 10) {
+          // Optimizers, Autodiff & State Estimation depend on L2 (Matrix QR/SVD) and L0 (Memory Tape)
+          const l2Nodes = allNodes.filter((n) => n.id.startsWith('L2_'));
+          const l0Nodes = allNodes.filter((n) => n.id.startsWith('L0_'));
+          if (l2Nodes.length > 0) deps.push(l2Nodes[(nodeIdx * 2) % l2Nodes.length].id);
+          if (l0Nodes.length > 0 && nodeIdx % 2 === 1) deps.push(l0Nodes[nodeIdx % l0Nodes.length].id);
+        } else if (layerIdx === 11) {
+          // Pricing Engines (European, Heston, SABR, Basket MC, American LSM) depend on:
+          // L4 (Discount Curves), L5 (Vol Surfaces), L6 (SDE Steppers), and L1 (Math Normals) -> 3 to 5 inputs
+          const l4Nodes = allNodes.filter((n) => n.id.startsWith('L4_'));
+          const l5Nodes = allNodes.filter((n) => n.id.startsWith('L5_'));
+          const l6Nodes = allNodes.filter((n) => n.id.startsWith('L6_'));
+          if (l4Nodes.length > 0) deps.push(l4Nodes[nodeIdx % l4Nodes.length].id);
+          if (l5Nodes.length > 0) deps.push(l5Nodes[(nodeIdx + 1) % l5Nodes.length].id);
+          if (l6Nodes.length > 0 && nodeIdx % 2 === 0) deps.push(l6Nodes[nodeIdx % l6Nodes.length].id);
+        } else if (layerIdx === 12) {
+          // Risk Aggregation & Basel metrics depend on multiple pricing engines (L11), Cholesky covariance (L2), and AAD (L8)
+          const l11Nodes = allNodes.filter((n) => n.id.startsWith('L11_'));
+          const l2Nodes = allNodes.filter((n) => n.id.startsWith('L2_'));
+          const l8Nodes = allNodes.filter((n) => n.id.startsWith('L8_'));
+          if (l11Nodes.length > 0) deps.push(l11Nodes[nodeIdx % l11Nodes.length].id);
+          if (l11Nodes.length > 1) deps.push(l11Nodes[(nodeIdx + 3) % l11Nodes.length].id);
+          if (l2Nodes.length > 0) deps.push(l2Nodes[nodeIdx % l2Nodes.length].id);
+          if (l8Nodes.length > 0) deps.push(l8Nodes[(nodeIdx + 2) % l8Nodes.length].id);
+        } else if (layerIdx >= 13) {
+          // Policies, Parquet Audit, Gateways & System Coordinator depend on Risk Aggregation (L12), Policies (L13), and Telemetry (L0)
+          const l12Nodes = allNodes.filter((n) => n.id.startsWith('L12_'));
+          const l0Nodes = allNodes.filter((n) => n.id.startsWith('L0_'));
+          if (l12Nodes.length > 0) deps.push(l12Nodes[nodeIdx % l12Nodes.length].id);
+          if (l12Nodes.length > 1) deps.push(l12Nodes[(nodeIdx + 2) % l12Nodes.length].id);
+          if (l0Nodes.length > 0) deps.push(l0Nodes[nodeIdx % l0Nodes.length].id);
+        }
       }
+
+      // Deduplicate dependencies while preserving order
+      const uniqueDeps = Array.from(new Set(deps));
 
       const cleanName = item.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
       const cppSignature = `// ${item.file}\nnamespace enterprise::core {\n  class ${item.name} {\n  public:\n    virtual void executeBatch(const ExecutionContext& ctx);\n  };\n}`;
@@ -361,7 +421,7 @@ export function buildMassiveEnterpriseDAG(): Node[] {
         path: `src/${item.file}`,
         kind: def.kind,
         status: layerIdx === 0 ? (nodeIdx < 3 ? 'tested' : 'todo') : 'todo',
-        deps,
+        deps: uniqueDeps,
         note: item.note,
         complexity: def.complexity,
         estimatedHours: def.hours,

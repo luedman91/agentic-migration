@@ -56,11 +56,38 @@ export default function LogsSection({ logs, onClearLogs, selectedNodeSymbol }: L
     });
   }, [logs, levelFilter, searchQuery]);
 
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    // When the user scrolls upwards with mousewheel or trackpad, pause auto-scroll immediately
+    // so rapid incoming log entries do not force the scrollbar back to the bottom.
+    if (e.deltaY < 0 && autoScroll) {
+      setAutoScroll(false);
+    }
+  };
+
+  const handleScroll = () => {
+    if (!containerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    // Check if user is within 35px of the bottom
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 35;
+    if (isAtBottom) {
+      if (!autoScroll) setAutoScroll(true);
+    } else {
+      if (autoScroll) setAutoScroll(false);
+    }
+  };
+
   useEffect(() => {
     if (autoScroll && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [filteredLogs, autoScroll]);
+
+  const scrollToBottom = () => {
+    setAutoScroll(true);
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  };
 
   const copyAllLogs = () => {
     const text = filteredLogs
@@ -128,9 +155,9 @@ export default function LogsSection({ logs, onClearLogs, selectedNodeSymbol }: L
   }, [logs]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+    <div className="flex flex-col h-full min-h-0 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
       {/* Log Header Toolbar */}
-      <div className="p-3 bg-slate-900/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+      <div className="p-3 bg-slate-900/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-800/80 rounded border border-slate-700/60 text-slate-200 font-mono font-semibold">
             <Terminal className="w-3.5 h-3.5 text-sky-400" />
@@ -185,7 +212,7 @@ export default function LogsSection({ logs, onClearLogs, selectedNodeSymbol }: L
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="px-3 py-2 bg-slate-900/50 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+      <div className="px-3 py-2 bg-slate-900/50 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
         <div className="flex items-center gap-1.5 flex-1 min-w-[200px] max-w-md bg-slate-950 px-2.5 py-1 rounded border border-slate-800 focus-within:border-sky-500">
           <Search className="w-3.5 h-3.5 text-slate-500" />
           <input
@@ -277,11 +304,14 @@ export default function LogsSection({ logs, onClearLogs, selectedNodeSymbol }: L
       </div>
 
       {/* Terminal Log Output */}
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-y-auto p-3 font-mono text-[12px] leading-relaxed space-y-1 bg-slate-950 select-text"
-      >
-        {filteredLogs.length === 0 ? (
+      <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          onWheel={handleWheel}
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 font-mono text-[12px] leading-relaxed space-y-1 bg-slate-950 select-text overscroll-contain scrollbar-thin"
+        >
+          {filteredLogs.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500 py-12">
             <Terminal className="w-8 h-8 mb-2 opacity-40 text-slate-400" />
             <p>No log records match the current filter</p>
@@ -434,6 +464,18 @@ export default function LogsSection({ logs, onClearLogs, selectedNodeSymbol }: L
               </div>
             );
           })
+        )}
+        </div>
+
+        {/* Floating Resume Auto-Scroll Button */}
+        {!autoScroll && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-sky-600/90 hover:bg-sky-500 text-white text-xs font-mono px-3.5 py-1.5 rounded-full shadow-2xl flex items-center gap-2 transition-all z-20 cursor-pointer border border-sky-400/50 backdrop-blur"
+          >
+            <ArrowDownCircle className="w-3.5 h-3.5 text-white animate-bounce" />
+            <span>New logs below &bull; Click to resume auto-scroll</span>
+          </button>
         )}
       </div>
 

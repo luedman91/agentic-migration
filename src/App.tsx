@@ -1,3 +1,21 @@
+/**
+ * ============================================================================
+ * QuantLib to PyTorch Migration Studio - Main Application Orchestrator
+ * ============================================================================
+ * 
+ * Feature Description:
+ * Core application interface and state coordination engine for automated legacy
+ * quantitative C++ (QuantLib) to modern PyTorch/CUDA migration. Coordinates
+ * topological DAG traversal, AST analysis, Gemini Agent code translation, Modal
+ * serverless GPU verification, oracle unit testing, and virtual filesystem exports.
+ * 
+ * Use Cases:
+ * 1. Visual interactive inspection of financial engineering dependency cones.
+ * 2. Multi-worker parallel migration with automated topological candidate dispatch.
+ * 3. Numerical oracle verification with dynamic error tolerance and stress tests.
+ * ============================================================================
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { initialNodes, europeanEngineNodes, hestonEngineNodes, deepPipelineNodes, massiveEnterprise150Nodes } from './data';
 import { initialUnitTests, europeanUnitTests, hestonUnitTests, deepPipelineUnitTests } from './data/unitTestsData';
@@ -27,14 +45,21 @@ import MigratedFilesDrawer from './components/MigratedFilesDrawer';
 import BuildingBlocksModal from './components/BuildingBlocksModal';
 import ArbitraryFunctionModal from './components/ArbitraryFunctionModal';
 import WriteIntegrationTestModal from './components/WriteIntegrationTestModal';
+import DiscoverGraphModal from './components/DiscoverGraphModal';
 import {
   isDagLeaf,
   generateLeafIntegrationTest,
   generateUnitTestForNode,
   generateRootToNodeIntegrationTest,
 } from './utils/dagTestManager';
+import {
+  getAvailableCandidates,
+  getSafeFallbackCandidate,
+  isPipelineFinished,
+} from './utils/dagScheduler';
 import { areSymbolsEquivalent } from './config/appConfig';
 import { executeModalNodeMigration } from './utils/modalClient';
+import { toSnakeCase, ensurePythonFilePathHasUnderscores } from './utils/stringUtils';
 import {
   Network,
   CheckCheck,
@@ -46,30 +71,33 @@ import {
   Package,
   FolderGit2,
   CloudLightning,
-  Monitor
+  Monitor,
+  Sparkles
 } from 'lucide-react';
 
 export default function App() {
   // Start Screen Project Ingestion State
   const [isProjectLoaded, setIsProjectLoaded] = useState(false);
   const [projectConfig, setProjectConfig] = useState<ProjectConfig>({
-    presetId: 'massive_enterprise_150_dag',
-    repoUrl: 'https://github.com/uber/athenadriver.git',
-    branch: 'main',
-    entryPoint: 'src/orchestrator/system_coordinator.cpp',
-    targetFramework: 'PyTorch',
+    presetId: 'deep_distributed_pipeline',
+    repoUrl: 'https://github.com/lballabio/QuantLib.git',
+    branch: 'v1.34.0',
+    entryPoint: 'ql/pricingengines/vanilla/analyticeuropeanengine.cpp',
+    targetFramework: 'pytorch',
     targetDevice: 'cuda',
     precision: 'float64',
     sourceLanguage: 'C++',
-    sourceLibraryName: 'Athena Engine + QuantLib Core (C++)',
-    targetLibraryName: 'py_enterprise_distributed_engine',
+    sourceLibraryName: 'QuantLib C++',
+    targetLibraryName: 'torch_quantlib',
     oracleEngine: 'C++ Simulation Reference & Modal Oracle',
     executionMode: 'modal',
+    numericalTolerance: '1e-5',
+    otherInstructions: 'numerical diff tolerance should be 1e-5\nvectorize inner mathematical loops with batched PyTorch tensor operations\npreserve original C++ docstrings and mathematical LaTeX comments\nstrictly annotate all function signatures with Python 3.11 type hints\nexport canonical symbol aliases (e.g. GaussianErrorFunction = ErrorFunction)',
   });
 
   // Main Workbench State
-  const [nodes, setNodes] = useState<Node[]>(massiveEnterprise150Nodes);
-  const [unitTests, setUnitTests] = useState<UnitTestResult[]>(massiveEnterpriseUnitTests);
+  const [nodes, setNodes] = useState<Node[]>(deepPipelineNodes);
+  const [unitTests, setUnitTests] = useState<UnitTestResult[]>(deepPipelineUnitTests);
   const [logs, setLogs] = useState<LogEntry[]>(initialLogs);
   const [migratedFiles, setMigratedFiles] = useState<MigratedFile[]>(initialMigratedFiles);
   const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
@@ -81,6 +109,7 @@ export default function App() {
   const [buildingBlocks, setBuildingBlocks] = useState<SymbolMapping[]>([]);
   const [isBuildingBlocksOpen, setIsBuildingBlocksOpen] = useState(false);
   const [isArbitraryFunctionOpen, setIsArbitraryFunctionOpen] = useState(false);
+  const [isDiscoverGraphOpen, setIsDiscoverGraphOpen] = useState(false);
 
   // Write Integration Test Modal State
   const [isWriteIntegrationTestOpen, setIsWriteIntegrationTestOpen] = useState(false);
@@ -90,6 +119,8 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [activeNodeIds, setActiveNodeIds] = useState<string[]>([]);
+  const [workerAssignments, setWorkerAssignments] = useState<Record<string, number>>({});
   const [scheduledCountdown, setScheduledCountdown] = useState<number | null>(null);
   const [isRunningTests, setIsRunningTests] = useState(false);
 
@@ -98,7 +129,7 @@ export default function App() {
     trigger: 'manual',
     scheduledDelaySeconds: 5,
     autoTestAfterTranslate: true,
-    concurrency: 1,
+    concurrency: 3,
     speedMultiplier: 1,
     stopOnFailure: true,
     targetDevice: 'cuda',
@@ -151,6 +182,7 @@ export default function App() {
 
   // Update a single node status
   const updateNodeStatus = useCallback((nodeId: string, status: NodeStatus) => {
+    nodesRef.current = nodesRef.current.map((n) => (n.id === nodeId ? { ...n, status } : n));
     setNodes((prev) =>
       prev.map((n) => (n.id === nodeId ? { ...n, status } : n))
     );
@@ -262,11 +294,23 @@ export default function App() {
     [handleRunTest, addLog]
   );
 
-  // Add a newly generated file to virtual filesystem
+  // Add a newly generated file to virtual filesystem with mirrored folder hierarchy
   const recordMigratedFile = useCallback(
     (node: Node) => {
-      const modulePath = `torch_quantlib/${node.path.replace('ql/', '').replace('.cpp', '.py').replace('.hpp', '.py')}`;
-      const testPath = `torch_quantlib/tests/test_${node.ql_symbol.toLowerCase()}.py`;
+      const targetPkg = projectConfig.targetLibraryName || 'torch_quantlib';
+      const cleanRelPath = node.path.replace(/^ql\//, '').replace(/\.(cpp|hpp|c|h)$/, '');
+      const pathParts = cleanRelPath.split('/');
+      const rawFileName = pathParts.pop() || node.ql_symbol;
+      const fileName = toSnakeCase(node.ql_symbol || rawFileName);
+      const subfolder = pathParts.join('/');
+
+      const modulePath = subfolder
+        ? `${targetPkg}/${subfolder}/${fileName}.py`
+        : `${targetPkg}/${fileName}.py`;
+
+      const testPath = subfolder
+        ? `tests/${subfolder}/test_${fileName}.py`
+        : `tests/test_${fileName}.py`;
 
       const moduleFile: MigratedFile = {
         id: `file_${node.id}_module`,
@@ -312,16 +356,18 @@ export default function App() {
 
   // Agentic AI Migration handler (powered by Gemini 3.8 Flash + Building Blocks Symbol Table)
   const handleMigrateWithAgent = useCallback(
-    async (node: Node) => {
+    async (node: Node, workerId: number = 1) => {
       setActiveNodeId(node.id);
+      setActiveNodeIds((prev) => Array.from(new Set([...prev, node.id])));
+      setWorkerAssignments((prev) => ({ ...prev, [node.id]: workerId }));
       const startTime = Date.now();
       const sourceLang = projectConfig.sourceLanguage || 'C++';
       const targetLang = projectConfig.targetLanguage || 'Python';
 
       addLog(
         'INFO',
-        `[AGENT-START] Initiating Gemini 3.8 Flash Hybrid Migration for ${node.ql_symbol}`,
-        `Applying Pydantic-grounded JSON schema with ${buildingBlocks.length} deterministic building blocks`,
+        `[WORKER-${workerId}-AGENT] Initiating Gemini 3.8 Flash Hybrid Migration for ${node.ql_symbol}`,
+        `Applying Pydantic-grounded JSON schema with ${buildingBlocks.length} deterministic building blocks on Worker ${workerId}`,
         node.id,
         node.ql_symbol,
         {
@@ -395,45 +441,38 @@ export default function App() {
         }
 
         // Update node code and status
-        setNodes((prev) =>
-          prev.map((n) => {
-            if (n.id === node.id) {
-              return {
-                ...n,
-                status: 'translated',
-                note: agentResult.vectorizationSummary || n.note,
-                code: {
-                  cpp: n.code?.cpp || '',
-                  python: agentResult.pythonCode,
-                },
-              };
-            }
-            return n;
-          })
+        const interimStatus: NodeStatus = 'translated';
+        const updatedNode: Node = {
+          ...node,
+          status: interimStatus,
+          note: agentResult.vectorizationSummary || node.note,
+          code: {
+            cpp: node.code?.cpp || '',
+            python: agentResult.pythonCode,
+          },
+        };
+        nodesRef.current = nodesRef.current.map((n) => (n.id === node.id ? updatedNode : n));
+        setNodes((prev) => prev.map((n) => (n.id === node.id ? updatedNode : n)));
+        setSelectedNode((prev) => (prev && prev.id === node.id ? updatedNode : prev));
+
+        // Write files to virtual filesystem using automated folder hierarchy with underscores
+        const cleanModuleName = toSnakeCase(node.ql_symbol);
+        const moduleFileName = `${cleanModuleName}.py`;
+        const testFileName = `test_${cleanModuleName}.py`;
+        const targetPkg = projectConfig.targetLibraryName || 'torch_quantlib';
+        const subfolder = agentResult.targetSubfolder || 'math';
+        const resolvedModulePath = ensurePythonFilePathHasUnderscores(
+          agentResult.targetFilePath || `${targetPkg}/${subfolder}/${moduleFileName}`,
+          node.ql_symbol
         );
-
-        setSelectedNode((prev) => {
-          if (prev && prev.id === node.id) {
-            return {
-              ...prev,
-              status: 'translated',
-              note: agentResult.vectorizationSummary || prev.note,
-              code: {
-                cpp: prev.code?.cpp || '',
-                python: agentResult.pythonCode,
-              },
-            };
-          }
-          return prev;
-        });
-
-        // Write files to virtual filesystem
-        const moduleFileName = `${node.ql_symbol.toLowerCase().replace(/[^a-z0-9]/g, '_')}.py`;
-        const testFileName = `test_${node.ql_symbol.toLowerCase().replace(/[^a-z0-9]/g, '_')}.py`;
+        const resolvedTestPath = ensurePythonFilePathHasUnderscores(
+          agentResult.testFilePath || `tests/${subfolder}/${testFileName}`,
+          `test_${node.ql_symbol}`
+        );
 
         const moduleFile: MigratedFile = {
           id: `file_${node.id}_module`,
-          path: `torch_quantlib/${moduleFileName}`,
+          path: resolvedModulePath,
           nodeId: node.id,
           symbol: node.ql_symbol,
           sizeBytes: agentResult.pythonCode.length,
@@ -446,7 +485,7 @@ export default function App() {
 
         const testFile: MigratedFile = {
           id: `file_${node.id}_test`,
-          path: `torch_quantlib/tests/${testFileName}`,
+          path: resolvedTestPath,
           nodeId: node.id,
           symbol: node.ql_symbol,
           sizeBytes: agentResult.unitTestCode.length,
@@ -595,6 +634,8 @@ export default function App() {
             node.id,
             node.ql_symbol
           );
+
+          updateNodeStatus(node.id, 'tested');
         }
       } catch (err: any) {
         console.error(err);
@@ -616,7 +657,13 @@ export default function App() {
         );
         updateNodeStatus(node.id, 'failed');
       } finally {
-        setActiveNodeId(null);
+        setActiveNodeId((curr) => (curr === node.id ? null : curr));
+        setActiveNodeIds((prev) => prev.filter((id) => id !== node.id));
+        setWorkerAssignments((prev) => {
+          const next = { ...prev };
+          delete next[node.id];
+          return next;
+        });
       }
     },
     [addLog, updateNodeStatus, projectConfig, buildingBlocks]
@@ -624,14 +671,16 @@ export default function App() {
 
   // Modal Serverless Cloud Execution Handler
   const handleMigrateWithModal = useCallback(
-    async (node: Node) => {
+    async (node: Node, workerId: number = 1) => {
       setActiveNodeId(node.id);
+      setActiveNodeIds((prev) => Array.from(new Set([...prev, node.id])));
+      setWorkerAssignments((prev) => ({ ...prev, [node.id]: workerId }));
       const startTime = Date.now();
 
       addLog(
         'INFO',
-        `[MODAL-DISPATCH] Offloading '${node.ql_symbol}' to Modal Serverless GPU Cluster`,
-        `Target: ${configRef.current.targetDevice.toUpperCase()} | Auto-parallelizing dependencies across distributed cloud containers`,
+        `[WORKER-${workerId}-MODAL] Offloading '${node.ql_symbol}' to Modal Serverless GPU Cluster`,
+        `Target: ${configRef.current.targetDevice.toUpperCase()} | Auto-parallelizing dependencies across distributed cloud containers on Worker ${workerId}`,
         node.id,
         node.ql_symbol
       );
@@ -644,7 +693,7 @@ export default function App() {
 
         addLog(
           'DEBUG',
-          `[MODAL-WORKER] Allocating Modal worker container with zero-copy shared memory...`,
+          `[MODAL-WORKER-${workerId}] Allocating Modal worker container with zero-copy shared memory...`,
           `Upstream DAG inputs: [${upstreamSymbols.join(', ') || 'root'}]`,
           node.id,
           node.ql_symbol
@@ -656,41 +705,24 @@ export default function App() {
           configRef.current.targetDevice,
           projectConfig.precision,
           upstreamSymbols,
-          unitTestsRef.current
+          unitTestsRef.current,
+          projectConfig.targetLibraryName || 'torch_quantlib'
         );
 
         // Update node code & status
-        setNodes((prev) =>
-          prev.map((n) => {
-            if (n.id === node.id) {
-              return {
-                ...n,
-                status: 'translated',
-                note: modalResult.summary,
-                code: {
-                  cpp: n.code?.cpp || '',
-                  python: modalResult.pythonCode,
-                },
-              };
-            }
-            return n;
-          })
-        );
-
-        setSelectedNode((prev) => {
-          if (prev && prev.id === node.id) {
-            return {
-              ...prev,
-              status: 'translated',
-              note: modalResult.summary,
-              code: {
-                cpp: prev.code?.cpp || '',
-                python: modalResult.pythonCode,
-              },
-            };
-          }
-          return prev;
-        });
+        const interimModalStatus: NodeStatus = 'translated';
+        const updatedModalNode: Node = {
+          ...node,
+          status: interimModalStatus,
+          note: modalResult.summary,
+          code: {
+            cpp: node.code?.cpp || '',
+            python: modalResult.pythonCode,
+          },
+        };
+        nodesRef.current = nodesRef.current.map((n) => (n.id === node.id ? updatedModalNode : n));
+        setNodes((prev) => prev.map((n) => (n.id === node.id ? updatedModalNode : n)));
+        setSelectedNode((prev) => (prev && prev.id === node.id ? updatedModalNode : prev));
 
         // Write files to virtual filesystem
         setMigratedFiles((prev) => {
@@ -773,7 +805,13 @@ export default function App() {
         );
         updateNodeStatus(node.id, 'failed');
       } finally {
-        setActiveNodeId(null);
+        setActiveNodeId((curr) => (curr === node.id ? null : curr));
+        setActiveNodeIds((prev) => prev.filter((id) => id !== node.id));
+        setWorkerAssignments((prev) => {
+          const next = { ...prev };
+          delete next[node.id];
+          return next;
+        });
       }
     },
     [addLog, updateNodeStatus, projectConfig]
@@ -781,27 +819,30 @@ export default function App() {
 
   // Execute a single step of migration for a target node
   const executeNodeMigration = useCallback(
-    async (node: Node) => {
+    async (node: Node, workerId: number = 1) => {
       if (configRef.current.executionMode === 'modal') {
-        await handleMigrateWithModal(node);
+        await handleMigrateWithModal(node, workerId);
         return;
       }
 
       if (configRef.current.useAgentEngine) {
-        await handleMigrateWithAgent(node);
+        await handleMigrateWithAgent(node, workerId);
         return;
       }
 
       setActiveNodeId(node.id);
+      setActiveNodeIds((prev) => Array.from(new Set([...prev, node.id])));
+      setWorkerAssignments((prev) => ({ ...prev, [node.id]: workerId }));
 
-      // STEP 1: AST Analysis
-      addLog(
-        'INFO',
-        `[AST-PASS] Analyzing Clang AST for ${node.path}`,
-        `Extracting C++ symbol signatures, virtual method tables, and template params for '${node.ql_symbol}'`,
-        node.id,
-        node.ql_symbol
-      );
+      try {
+        // STEP 1: AST Analysis
+        addLog(
+          'INFO',
+          `[WORKER-${workerId}-AST] Analyzing Clang AST for ${node.path}`,
+          `Extracting C++ symbol signatures, virtual method tables, and template params for '${node.ql_symbol}'`,
+          node.id,
+          node.ql_symbol
+        );
 
       const stepDelay = Math.max(300, 900 / configRef.current.speedMultiplier);
       await new Promise((res) => setTimeout(res, stepDelay));
@@ -930,41 +971,36 @@ export default function App() {
           );
         }
       }
-
-      setActiveNodeId(null);
+    } finally {
+      setActiveNodeId((curr) => (curr === node.id ? null : curr));
+      setActiveNodeIds((prev) => prev.filter((id) => id !== node.id));
+      setWorkerAssignments((prev) => {
+        const next = { ...prev };
+        delete next[node.id];
+        return next;
+      });
+    }
     },
     [addLog, updateNodeStatus, handleRunTest, recordMigratedFile, handleMigrateWithAgent]
   );
 
-  // Helper: Find next un-migrated node in topological dependency order
-  const findNextCandidateNode = useCallback((): Node | null => {
-    const currentNodes = nodesRef.current;
-    const candidates = currentNodes.filter((n) => n.status === 'todo' || n.status === 'mapped');
-    if (candidates.length === 0) return null;
-
-    // Pick candidate whose dependencies are already translated or tested
-    const readyCandidate = candidates.find((cand) => {
-      return cand.deps.every((depId) => {
-        const dep = currentNodes.find((n) => n.id === depId);
-        return !dep || dep.status === 'tested' || dep.status === 'translated';
-      });
-    });
-
-    return readyCandidate || candidates[0];
-  }, []);
-
-  // Migration Loop (Robust implementation using ref to avoid React state closure timing bugs)
+  // Migration Loop with Multi-Worker Parallel Dispatch (Supports 1-3 parallel workers)
   const runMigrationLoop = useCallback(async () => {
     isLoopRunningRef.current = true;
     isLoopPausedRef.current = false;
     setIsRunning(true);
     setIsPaused(false);
 
+    const concurrency = Math.min(Math.max(1, configRef.current.concurrency || 1), 3);
+
     addLog(
       'INFO',
       `[PIPELINE-START] ${projectConfig.sourceLibraryName || projectConfig.sourceLanguage || 'Function'} -> ${projectConfig.targetFramework} migration pipeline running`,
-      `Repository: ${projectConfig.repoUrl} @ ${projectConfig.branch} | Backend: ${configRef.current.executionMode === 'modal' ? 'Modal Serverless Cloud (Distributed Workers)' : 'Local Sandbox Container'} | Hardware: ${configRef.current.targetDevice.toUpperCase()}`
+      `Repository: ${projectConfig.repoUrl} @ ${projectConfig.branch} | Backend: ${configRef.current.executionMode === 'modal' ? 'Modal Serverless Cloud' : 'Local Sandbox Container'} | Concurrency: ${concurrency} Parallel Worker${concurrency > 1 ? 's' : ''}`
     );
+
+    const inFlightWorkers = new Map<number, Promise<void>>();
+    const inFlightNodeIds = new Set<string>();
 
     while (isLoopRunningRef.current) {
       if (isLoopPausedRef.current) {
@@ -972,8 +1008,8 @@ export default function App() {
         continue;
       }
 
-      const nextNode = findNextCandidateNode();
-      if (!nextNode) {
+      const currentNodes = nodesRef.current;
+      if (isPipelineFinished(currentNodes, inFlightWorkers.size)) {
         addLog(
           'SUCCESS',
           'Pipeline Complete: All mathematical modules in dependency cone have been ported and tested!',
@@ -982,18 +1018,82 @@ export default function App() {
         isLoopRunningRef.current = false;
         setIsRunning(false);
         setActiveNodeId(null);
+        setActiveNodeIds([]);
+        setWorkerAssignments({});
         break;
       }
 
-      await executeNodeMigration(nextNode);
+      // Check if Stop on Failure is enabled and any node failed
+      if (configRef.current.stopOnFailure && currentNodes.some((n) => n.status === 'failed')) {
+        const failedNode = currentNodes.find((n) => n.status === 'failed');
+        addLog(
+          'ERROR',
+          `[PIPELINE-HALTED] Migration stopped: Node ${failedNode?.ql_symbol || 'unknown'} encountered an error and Stop on Failure is enabled.`,
+          'Inspect the diagnostics log or disable Stop on Failure to continue other branches.'
+        );
+        isLoopRunningRef.current = false;
+        setIsRunning(false);
+        setActiveNodeId(null);
+        setActiveNodeIds([]);
+        setWorkerAssignments({});
+        break;
+      }
 
-      if (!isLoopRunningRef.current) break;
+      // Check available worker slots and launch ready candidates
+      let launchedAny = false;
+      for (let wId = 1; wId <= concurrency; wId++) {
+        if (!inFlightWorkers.has(wId)) {
+          const candidates = getAvailableCandidates(currentNodes, Array.from(inFlightNodeIds));
+          if (candidates.length > 0) {
+            const nextNode = candidates[0];
+            inFlightNodeIds.add(nextNode.id);
+            launchedAny = true;
 
-      // Pause between nodes
-      const pauseDuration = Math.max(200, 600 / configRef.current.speedMultiplier);
-      await new Promise((res) => setTimeout(res, pauseDuration));
+            const workerPromise = (async () => {
+              try {
+                await executeNodeMigration(nextNode, wId);
+              } finally {
+                inFlightNodeIds.delete(nextNode.id);
+                inFlightWorkers.delete(wId);
+              }
+            })();
+
+            inFlightWorkers.set(wId, workerPromise);
+          }
+        }
+      }
+
+      // Fallback: If no workers are in flight, no candidate could be launched, but uncompleted nodes remain
+      // (e.g. cycles or unrooted subgraphs), launch the first non-failed remaining node
+      if (inFlightWorkers.size === 0 && !launchedAny) {
+        const fallback = getSafeFallbackCandidate(currentNodes, Array.from(inFlightNodeIds));
+        if (fallback) {
+          inFlightNodeIds.add(fallback.id);
+          const workerPromise = (async () => {
+            try {
+              await executeNodeMigration(fallback, 1);
+            } finally {
+              inFlightNodeIds.delete(fallback.id);
+              inFlightWorkers.delete(1);
+            }
+          })();
+          inFlightWorkers.set(1, workerPromise);
+        } else {
+          // No valid nodes can be dispatched
+          break;
+        }
+      }
+
+      // Wait for any worker to finish or a brief tick
+      if (inFlightWorkers.size > 0) {
+        const pauseDuration = Math.max(60, 200 / configRef.current.speedMultiplier);
+        await Promise.race([
+          ...Array.from(inFlightWorkers.values()),
+          new Promise((res) => setTimeout(res, pauseDuration)),
+        ]);
+      }
     }
-  }, [addLog, findNextCandidateNode, executeNodeMigration, projectConfig]);
+  }, [addLog, executeNodeMigration, projectConfig]);
 
   // Start migration handler (with schedule support)
   const handleStartMigration = useCallback(() => {
@@ -1042,12 +1142,13 @@ export default function App() {
 
   // Step next single node
   const handleStepNextNode = async () => {
-    const nextNode = findNextCandidateNode();
+    const candidates = getAvailableCandidates(nodesRef.current);
+    const nextNode = candidates.length > 0 ? candidates[0] : null;
     if (!nextNode) {
       addLog('INFO', 'All nodes have already completed migration');
       return;
     }
-    await executeNodeMigration(nextNode);
+    await executeNodeMigration(nextNode, 1);
   };
 
   // Clean Reset & Delete All Migrated Files
@@ -1065,17 +1166,11 @@ export default function App() {
     setMigratedFiles([]);
 
     // 3. Reset DAG and Unit tests back to initial unmigrated baseline (all nodes turned grey)
-    const isMassive150 = projectConfig.presetId === 'massive_enterprise_150_dag' ||
-      (projectConfig.targetLibraryName?.includes('enterprise') || projectConfig.sourceLibraryName?.includes('Core')) &&
-      projectConfig.entryPoint.toLowerCase().includes('coordinator');
-    const isDeepPipeline = projectConfig.presetId === 'deep_distributed_pipeline' ||
-      projectConfig.entryPoint.toLowerCase().includes('coordinator') ||
-      projectConfig.entryPoint.toLowerCase().includes('athena');
-    const isHeston = projectConfig.presetId === 'heston_semi_analytic' || projectConfig.entryPoint.toLowerCase().includes('heston');
-    const baseNodes = isMassive150 ? massiveEnterprise150Nodes : isDeepPipeline ? deepPipelineNodes : isHeston ? hestonEngineNodes : europeanEngineNodes;
+    const isMassive150 = projectConfig.presetId === 'massive_enterprise_150_dag';
+    const baseNodes = isMassive150 ? massiveEnterprise150Nodes : deepPipelineNodes;
     setNodes(baseNodes.map((n) => ({ ...n, status: 'todo' as NodeStatus })));
 
-    const baseTests = isMassive150 ? massiveEnterpriseUnitTests : isDeepPipeline ? deepPipelineUnitTests : isHeston ? hestonUnitTests : europeanUnitTests;
+    const baseTests = isMassive150 ? massiveEnterpriseUnitTests : deepPipelineUnitTests;
     setUnitTests(
       baseTests.map((t) => ({
         ...t,
@@ -1163,6 +1258,28 @@ export default function App() {
     );
   };
 
+  // Dynamic Graph Discovery Handler (zero preloaded data)
+  const handleLoadDiscoveredDag = (
+    newNodes: Node[],
+    newUnitTests: UnitTestResult[],
+    entryPoint: string,
+    targetPackageName: string
+  ) => {
+    setNodes(newNodes);
+    setUnitTests(newUnitTests);
+    setProjectConfig((prev) => ({
+      ...prev,
+      entryPoint,
+      targetLibraryName: targetPackageName,
+    }));
+    setSelectedNode(newNodes[0] || null);
+    addLog(
+      'SUCCESS',
+      `[GRAPH-DISCOVERY] Autonomous Graph Agent synthesized ${newNodes.length} DAG nodes from '${entryPoint}'`,
+      `Zero preloaded data used. Target package: ${targetPackageName} | Ready for vectorized migration.`
+    );
+  };
+
   // Run test for a specific symbol
   const handleRunTestForNode = useCallback(
     async (symbol: string) => {
@@ -1224,6 +1341,24 @@ export default function App() {
     [selectedNode]
   );
 
+  const handleRunIntegrationTestForNode = useCallback(
+    async (nodeOrId: Node | string) => {
+      const nodeId = typeof nodeOrId === 'string' ? nodeOrId : nodeOrId.id;
+      const targetNode = typeof nodeOrId === 'string' ? nodes.find((n) => n.id === nodeOrId) : nodeOrId;
+      const targetTest = unitTests.find(
+        (t) =>
+          (t.targetNodeId === nodeId || (targetNode && t.targetSymbol === targetNode.ql_symbol)) &&
+          t.category === 'integration'
+      );
+      if (targetTest) {
+        await handleRunTest(targetTest.id);
+      } else if (targetNode) {
+        handleOpenWriteIntegrationTest(targetNode);
+      }
+    },
+    [unitTests, nodes, handleRunTest, handleOpenWriteIntegrationTest]
+  );
+
   const handleViewInDAGTestTree = useCallback(
     (targetNodeId: string, moduleSymbols?: string[]) => {
       const node = nodes.find(
@@ -1283,20 +1418,14 @@ export default function App() {
             targetDevice: cfg.targetDevice,
             executionMode: cfg.executionMode || 'modal',
           }));
-          const isMassive150 = cfg.presetId === 'massive_enterprise_150_dag' ||
-            (cfg.targetLibraryName?.includes('enterprise') || cfg.sourceLibraryName?.includes('Core')) &&
-            cfg.entryPoint.toLowerCase().includes('coordinator');
-          const isDeepPipeline = cfg.presetId === 'deep_distributed_pipeline' ||
-            cfg.entryPoint.toLowerCase().includes('coordinator') ||
-            cfg.entryPoint.toLowerCase().includes('athena');
-          const isHeston = cfg.presetId === 'heston_semi_analytic' || cfg.entryPoint.toLowerCase().includes('heston');
-          setNodes(isMassive150 ? massiveEnterprise150Nodes : isDeepPipeline ? deepPipelineNodes : isHeston ? hestonEngineNodes : europeanEngineNodes);
-          setUnitTests(isMassive150 ? massiveEnterpriseUnitTests : isDeepPipeline ? deepPipelineUnitTests : isHeston ? hestonUnitTests : europeanUnitTests);
+          const isMassive150 = cfg.presetId === 'massive_enterprise_150_dag';
+          setNodes(isMassive150 ? massiveEnterprise150Nodes : deepPipelineNodes);
+          setUnitTests(isMassive150 ? massiveEnterpriseUnitTests : deepPipelineUnitTests);
           setIsProjectLoaded(true);
           addLog(
             'INFO',
             `[INGEST] Repository loaded: ${cfg.repoUrl} @ ${cfg.branch}`,
-            `Target: ${cfg.presetId || cfg.entryPoint} | Modules: ${isMassive150 ? 150 : isDeepPipeline ? 28 : isHeston ? 18 : 16} | Framework: ${cfg.targetFramework} (${cfg.targetDevice.toUpperCase()}) | Runtime: ${cfg.executionMode === 'modal' ? 'Modal Serverless Cloud' : 'Local Container'}`
+            `Scope: ${isMassive150 ? '150 Nodes (Enterprise Graph)' : '28 Nodes (Distributed Pipeline)'} | Framework: ${cfg.targetFramework} (${cfg.targetLibraryName || 'torch_quantlib'}) | Tolerance: ${cfg.numericalTolerance || '1e-5'} | Runtime: ${cfg.executionMode === 'modal' ? 'Modal Serverless Cloud' : 'Local Container'}`
           );
         }}
       />
@@ -1314,10 +1443,10 @@ export default function App() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-sm sm:text-base font-bold tracking-tight text-white font-mono">
-                {projectConfig.sourceLibraryName || projectConfig.sourceLanguage || 'Function Library'} → {projectConfig.targetFramework} Migration Workbench
+                Graph based agentic migration engine
               </h1>
               <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-sky-950 text-sky-300 border border-sky-800/80">
-                {projectConfig.sourceLanguage || 'C++'} → {projectConfig.targetFramework}
+                {projectConfig.sourceLibraryName || 'QuantLib'} → {projectConfig.targetFramework} ({projectConfig.targetLibraryName || 'torch_quantlib'})
               </span>
               {config.executionMode === 'modal' ? (
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1">
@@ -1330,7 +1459,7 @@ export default function App() {
               )}
             </div>
             <p className="text-[11px] text-slate-400">
-              Universal Function & Mathematical Dependency DAG Transpilation & Differential Oracle Parity Engine
+              Autonomous Dependency Graph Synthesis, AST Decomposition & Differential Verification Engine
             </p>
           </div>
         </div>
@@ -1396,6 +1525,15 @@ export default function App() {
         {/* Right Status Badge */}
         <div className="hidden sm:flex items-center gap-2 font-mono text-xs text-slate-400">
           <button
+            onClick={() => setIsDiscoverGraphOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-purple-950/70 border border-purple-800/80 hover:bg-purple-900 transition-colors text-purple-200 cursor-pointer"
+            title="Graph Agent Autonomous Discovery: Synthesize DAG with zero preloaded data"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span>Graph Discovery</span>
+          </button>
+
+          <button
             onClick={() => setIsProjectLoaded(false)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-sky-950/70 border border-sky-800/80 hover:bg-sky-900 transition-colors text-sky-200 cursor-pointer"
             title="Switch codebase archetype or re-select preset"
@@ -1448,6 +1586,7 @@ export default function App() {
         projectConfig={projectConfig}
         onOpenBuildingBlocks={() => setIsBuildingBlocksOpen(true)}
         buildingBlocksCount={buildingBlocks.length}
+        onOpenDiscoverGraph={() => setIsDiscoverGraphOpen(true)}
       />
 
       {/* Main Workspace Area */}
@@ -1536,21 +1675,46 @@ export default function App() {
           {/* TAB 1: WORKBENCH */}
           {activeTab === 'workbench' && (
             <div className="flex-1 rounded-xl border border-slate-800 overflow-hidden bg-slate-950 relative flex flex-col">
-              <GraphView
-                nodes={nodes}
-                onSelect={(node) => setSelectedNode(node)}
-                selectedNodeId={selectedNode?.id}
-                activeNodeId={activeNodeId || undefined}
-                viewMode={viewMode}
-                unitTests={unitTests}
-                onRunTestForNode={handleRunTestForNode}
-              />
+              {nodes.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-950">
+                  <div className="p-4 rounded-2xl bg-purple-950/60 border border-purple-800/80 text-purple-400 mb-4 shadow-xl">
+                    <Sparkles className="w-10 h-10 animate-pulse" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2 font-mono">
+                    Zero Preloaded Data State
+                  </h3>
+                  <p className="text-sm text-slate-400 max-w-md mb-6 leading-relaxed">
+                    No preloaded static nodes are loaded. The Graph Agent is standing by to autonomously discover, parse, and topologically decompose any arbitrary C++ entry point into a DAG.
+                  </p>
+                  <button
+                    onClick={() => setIsDiscoverGraphOpen(true)}
+                    className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-purple-900/50 transition cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>Discover DAG with Graph Agent</span>
+                  </button>
+                </div>
+              ) : (
+                <GraphView
+                  nodes={nodes}
+                  onSelect={(node) => setSelectedNode(node)}
+                  selectedNodeId={selectedNode?.id}
+                  activeNodeId={activeNodeId || undefined}
+                  activeNodeIds={activeNodeIds}
+                  workerAssignments={workerAssignments}
+                  viewMode={viewMode}
+                  unitTests={unitTests}
+                  onRunTestForNode={handleRunTestForNode}
+                  onRunIntegrationTestForNode={handleRunIntegrationTestForNode}
+                  onOpenWriteIntegrationTest={handleOpenWriteIntegrationTest}
+                />
+              )}
             </div>
           )}
 
           {/* TAB 2: UNIT TEST OVERVIEW */}
           {activeTab === 'tests' && (
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
               <UnitTestOverview
                 unitTests={unitTests}
                 onRunTest={handleRunTest}
@@ -1566,7 +1730,7 @@ export default function App() {
 
           {/* TAB 3: RUNTIME LOGS */}
           {activeTab === 'logs' && (
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
               <LogsSection
                 logs={logs}
                 onClearLogs={handleClearLogs}
@@ -1577,9 +1741,9 @@ export default function App() {
 
           {/* TAB 4: SPLIT VIEW */}
           {activeTab === 'split' && (
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-3 overflow-hidden h-full">
-              <div className="rounded-xl border border-slate-800/80 overflow-hidden bg-slate-950 flex flex-col h-full shadow-lg relative">
-                <div className="px-3 py-1.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between text-xs font-mono">
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-3 overflow-hidden h-full min-h-0">
+              <div className="rounded-xl border border-slate-800/80 overflow-hidden bg-slate-950 flex flex-col h-full min-h-0 shadow-lg relative">
+                <div className="px-3 py-1.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between text-xs font-mono shrink-0">
                   <span className="flex items-center gap-1.5 text-slate-300 font-semibold">
                     <Network className="w-3.5 h-3.5 text-sky-400" />
                     <span>Dependency DAG Structure</span>
@@ -1588,20 +1752,25 @@ export default function App() {
                     Interactive Topology &bull; {nodes.length} Nodes
                   </span>
                 </div>
-                <div className="flex-1 relative overflow-hidden">
+                <div className="flex-1 min-h-0 relative overflow-hidden">
                   <GraphView
                     nodes={nodes}
                     onSelect={(node) => setSelectedNode(node)}
                     selectedNodeId={selectedNode?.id}
                     activeNodeId={activeNodeId || undefined}
+                    activeNodeIds={activeNodeIds}
+                    workerAssignments={workerAssignments}
                     viewMode={viewMode}
                     unitTests={unitTests}
+                    defaultOrientation="vertical"
                     onRunTestForNode={handleRunTestForNode}
+                    onRunIntegrationTestForNode={handleRunIntegrationTestForNode}
+                    onOpenWriteIntegrationTest={handleOpenWriteIntegrationTest}
                   />
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-800/80 overflow-hidden bg-slate-950 flex flex-col h-full shadow-lg">
+              <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
                 <LogsSection
                   logs={logs}
                   onClearLogs={handleClearLogs}
@@ -1664,6 +1833,15 @@ export default function App() {
         preselectedTargetNode={integrationTestTargetNode}
         onSaveIntegrationTest={handleSaveIntegrationTest}
         onRunNodeTest={handleRunTestForNode}
+      />
+
+      {/* Graph Agent Dynamic Discovery Modal (Zero Preloaded Data) */}
+      <DiscoverGraphModal
+        isOpen={isDiscoverGraphOpen}
+        onClose={() => setIsDiscoverGraphOpen(false)}
+        onLoadDiscoveredDag={handleLoadDiscoveredDag}
+        currentEntryPoint={projectConfig.entryPoint}
+        currentTargetPackage={projectConfig.targetLibraryName}
       />
     </div>
   );

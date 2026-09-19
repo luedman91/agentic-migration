@@ -97,14 +97,26 @@ export interface ProjectConfig {
   entryPoint: string;
   sourceLanguage?: string; // e.g. 'C++', 'Fortran', 'Matlab', 'Julia', 'C'
   targetLanguage?: string; // e.g. 'Python', 'Rust', 'Julia', 'C++'
-  targetFramework: 'PyTorch' | 'JAX' | 'TensorFlow' | 'Triton';
+  targetFramework: 'PyTorch' | 'JAX' | 'TensorFlow' | 'Triton' | string;
   targetDevice: 'cpu' | 'cuda' | 'mps';
   precision: 'float64' | 'mixed_precision';
   oracleEngine?: string;
   sourceLibraryName?: string; // e.g. 'QuantLib', 'Sundials', 'OpenFOAM', 'BLAS/LAPACK'
-  targetLibraryName?: string; // e.g. 'torch_quantlib', 'jax_sim', 'torch_sundials'
+  targetLibraryName?: string; // e.g. 'torch_quantlib', 'py_json_fast', 'jax_sim'
   executionMode?: 'local' | 'modal' | 'agent';
   presetId?: string; // e.g. 'massive_enterprise_150_dag', 'deep_distributed_pipeline', etc.
+  numericalTolerance?: string; // e.g. '1e-5'
+  otherInstructions?: string; // Prompt directives and migration variables
+}
+
+export interface WorkerState {
+  id: number;
+  name: string;
+  status: 'idle' | 'running' | 'completed';
+  currentNodeId: string | null;
+  currentSymbol: string | null;
+  startedAt?: number;
+  tasksCompleted: number;
 }
 
 export type MigrationTrigger = 'manual' | 'on_dependency' | 'scheduled' | 'continuous';

@@ -45,6 +45,7 @@ interface ControlsBarProps {
   projectConfig?: ProjectConfig;
   onOpenBuildingBlocks?: () => void;
   buildingBlocksCount?: number;
+  onOpenDiscoverGraph?: () => void;
 }
 
 export default function ControlsBar({
@@ -67,6 +68,7 @@ export default function ControlsBar({
   projectConfig,
   onOpenBuildingBlocks,
   buildingBlocksCount = 17,
+  onOpenDiscoverGraph,
 }: ControlsBarProps) {
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [modalStatus, setModalStatus] = useState<ModalStatusInfo | null>(null);
@@ -249,6 +251,27 @@ export default function ControlsBar({
             ))}
           </div>
 
+          {/* Concurrency / Parallel Workers Selector (1 to 3 workers) */}
+          <div className="flex items-center gap-1 bg-slate-950 px-2 py-1.5 rounded-lg border border-slate-800 text-xs">
+            <span className="text-slate-400 text-[11px] font-medium flex items-center gap-1" title="Number of concurrent migration workers (1 to 3)">
+              <Cpu className="w-3 h-3 text-sky-400" /> Workers:
+            </span>
+            {[1, 2, 3].map((w) => (
+              <button
+                key={w}
+                onClick={() => onChangeConfig({ concurrency: w })}
+                className={`px-1.5 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer ${
+                  (config.concurrency || 3) === w
+                    ? 'bg-sky-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title={`Run ${w} parallel worker${w > 1 ? 's' : ''} across DAG topological candidates`}
+              >
+                {w}W
+              </button>
+            ))}
+          </div>
+
           {/* Migrated Files Explorer Button */}
           <button
             onClick={onOpenFilesDrawer}
@@ -275,6 +298,18 @@ export default function ControlsBar({
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-900 text-indigo-300 border border-indigo-700 font-bold">
                 {buildingBlocksCount}
               </span>
+            </button>
+          )}
+
+          {/* Graph Agent Dynamic Discovery Button */}
+          {onOpenDiscoverGraph && (
+            <button
+              onClick={onOpenDiscoverGraph}
+              className="px-2.5 py-1.5 bg-purple-950/70 hover:bg-purple-900 text-purple-200 rounded-lg text-xs font-mono flex items-center gap-1.5 border border-purple-700/60 transition-colors cursor-pointer"
+              title="Graph Agent Autonomous Discovery: Synthesize DAG dynamically with zero preloaded data"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>Graph Discovery</span>
             </button>
           )}
 
@@ -632,6 +667,33 @@ export default function ControlsBar({
                   Enable Gemini 3.8 Flash Hybrid Agent (Schema-grounded with Pydantic)
                 </span>
               </label>
+            </div>
+
+            {/* Concurrency & Parallel Worker Pool */}
+            <div className="space-y-2 p-3 bg-slate-900 rounded-lg border border-slate-800">
+              <span className="font-semibold text-sky-400 uppercase text-[11px] tracking-wider block flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-sky-400" />
+                5. Concurrency & Parallel Worker Pool
+              </span>
+              <p className="text-slate-400 text-[11px]">
+                Process up to 3 topological DAG candidate nodes simultaneously using asynchronous parallel worker threads.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                {[1, 2, 3].map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => onChangeConfig({ concurrency: w })}
+                    className={`flex-1 py-1.5 px-2 rounded font-mono text-center border transition-colors cursor-pointer text-xs ${
+                      (config.concurrency || 3) === w
+                        ? 'bg-sky-600 text-white border-sky-400 font-bold shadow-sm'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    {w} Worker{w > 1 ? 's (Parallel)' : ' (Serial)'}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

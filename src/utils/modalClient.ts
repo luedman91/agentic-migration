@@ -17,6 +17,7 @@
 
 import { Node, UnitTestResult, MigratedFile, TestStatus, ProjectConfig } from '../types';
 import { logClientFunctionCall } from './logger';
+import { toSnakeCase, ensurePythonFilePathHasUnderscores } from './stringUtils';
 
 export interface ModalExecutionResult {
   taskId: string;
@@ -86,7 +87,8 @@ export async function executeModalNodeMigration(
   targetDevice: string,
   precision: string,
   upstreamSymbols: string[],
-  existingTests: UnitTestResult[] = []
+  existingTests: UnitTestResult[] = [],
+  targetPackageName: string = 'torch_quantlib'
 ): Promise<ModalExecutionResult> {
   logClientFunctionCall('modalClient', 'executeModalNodeMigration', {
     nodeId: node?.id,
@@ -125,14 +127,31 @@ export async function executeModalNodeMigration(
   const pyCode = result.nodeResult?.pythonCode || `# Modal kernel\nimport torch\n`;
   const summary = result.nodeResult?.vectorizationSummary || `Executed on Modal worker ${result.workerId}`;
 
-  const moduleFileName = `${node.ql_symbol.toLowerCase().replace(/[^a-z0-9]/g, '_')}.py`;
-  const testFileName = `test_${node.ql_symbol.toLowerCase().replace(/[^a-z0-9]/g, '_')}.py`;
+  // Deduce target subfolder and module path dynamically
+  let subfolder = 'math';
+  if (node.path) {
+    const parts = node.path.replace(/\\/g, '/').replace(/^(src\/|ql\/|include\/|lib\/)/i, '').split('/');
+    if (parts.length > 1) {
+      subfolder = parts.slice(0, parts.length - 1).join('/').toLowerCase();
+    }
+  } else if (node.kind === 'solver') {
+    subfolder = 'pricingengines';
+  } else if (node.kind === 'date_logic') {
+    subfolder = 'time';
+  }
 
-  const unitTestSnippet = `import pytest\nimport torch\nfrom ${node.ql_symbol.toLowerCase()} import ${node.ql_symbol}\n\ndef test_modal_distributed_${node.ql_symbol.toLowerCase()}():\n    kernel = ${node.ql_symbol}()\n    # Executed on Modal worker ${result.workerId} (${result.gpuAllocated})\n    assert kernel is not None\n`;
+  const pkgName = targetPackageName || 'torch_quantlib';
+  const cleanModuleName = toSnakeCase(node.ql_symbol);
+  const moduleFileName = `${cleanModuleName}.py`;
+  const testFileName = `test_${cleanModuleName}.py`;
+  const moduleFilePath = `${pkgName}/${subfolder}/${moduleFileName}`;
+  const testFilePath = `tests/${subfolder}/${testFileName}`;
+
+  const unitTestSnippet = `import pytest\nimport torch\nfrom ${pkgName}.${subfolder.replace(/\//g, '.')}.${cleanModuleName} import ${node.ql_symbol}\n\ndef test_modal_distributed_${cleanModuleName}():\n    kernel = ${node.ql_symbol}()\n    # Executed on Modal worker ${result.workerId} (${result.gpuAllocated})\n    assert kernel is not None\n`;
 
   const moduleFile: MigratedFile = {
     id: `file_${node.id}_module_modal`,
-    path: `py_distributed/${moduleFileName}`,
+    path: moduleFilePath,
     nodeId: node.id,
     symbol: node.ql_symbol,
     sizeBytes: pyCode.length,
@@ -145,7 +164,7 @@ export async function executeModalNodeMigration(
 
   const testFile: MigratedFile = {
     id: `file_${node.id}_test_modal`,
-    path: `py_distributed/tests/${testFileName}`,
+    path: testFilePath,
     nodeId: node.id,
     symbol: node.ql_symbol,
     sizeBytes: unitTestSnippet.length,
@@ -158,7 +177,7 @@ export async function executeModalNodeMigration(
 
   const unitTest: UnitTestResult = {
     id: `test_modal_${node.id}`,
-    name: `test_modal_distributed_${node.ql_symbol.toLowerCase()}`,
+    name: `test_modal_distributed_${toSnakeCase(node.ql_symbol)}`,
     suite: 'Modal Distributed Worker Suite',
     category: 'target_library',
     shippable: true,

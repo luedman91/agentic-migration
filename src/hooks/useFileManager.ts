@@ -19,6 +19,7 @@ import { useState, useCallback } from 'react';
 import { MigratedFile, Node } from '../types';
 import { initialFiles, initialMigratedFiles } from '../data/initialFiles';
 import { logClientFunctionCall } from '../utils/logger';
+import { toSnakeCase } from '../utils/stringUtils';
 
 /**
  * Custom React hook for managing virtual files and package structure.
@@ -62,10 +63,12 @@ export function useFileManager() {
     logClientFunctionCall('useFileManager', 'syncNodeToFileSystem', { symbol });
     if (!pythonCode) return;
 
-    const moduleName = symbol.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-    const folder = node.kind === 'pure_math' ? 'torch_quantlib/math' : 'torch_quantlib/pricingengines';
+    const moduleName = toSnakeCase(symbol);
+    const subfolder = node.kind === 'pure_math' ? 'math' : 'pricingengines';
+    const folder = `torch_quantlib/${subfolder}`;
     const filePath = `${folder}/${moduleName}.py`;
-    const testPath = `torch_quantlib/tests/test_${moduleName}.py`;
+    // Strict mirrored test hierarchy (tests/ mirrors torch_quantlib/)
+    const testPath = `tests/${subfolder}/test_${moduleName}.py`;
 
     // Upsert the main Python module
     upsertFile({

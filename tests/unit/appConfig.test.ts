@@ -52,9 +52,11 @@ describe('Application Configuration Hub', () => {
   });
 
   it('provides a complete default project configuration baseline', () => {
-    expect(DEFAULT_PROJECT_CONFIG.targetFramework).toBe('PyTorch');
+    expect(DEFAULT_PROJECT_CONFIG.targetFramework.toLowerCase()).toBe('pytorch');
     expect(DEFAULT_PROJECT_CONFIG.targetDevice).toBe('cuda');
     expect(DEFAULT_PROJECT_CONFIG.precision).toBe('float64');
-    expect(DEFAULT_PROJECT_CONFIG.presetId).toBe('massive_enterprise_150_dag');
+    expect(DEFAULT_PROJECT_CONFIG.repoUrl).toContain('QuantLib');
+    expect(DEFAULT_PROJECT_CONFIG.targetLibraryName).toBe('torch_quantlib');
+    expect(DEFAULT_PROJECT_CONFIG.numericalTolerance).toBe('1e-5');
   });
 });

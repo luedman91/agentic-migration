@@ -995,7 +995,7 @@ public:
     bool parseFromArray(const uint8_t* data, size_t size);
     std::string_view getPayload() const;
 };`,
-      python: `# Python / Vectorized Buffer: py_distributed/io/buffer.py
+      python: `# Python / Vectorized Buffer: torch_quantlib/io/buffer.py
 class ProtobufMessageBuffer:
     """Zero-copy memoryview wrapper with direct NumPy/PyTorch tensor zero-copy ingestion."""
     def __init__(self, raw_bytes: bytes):

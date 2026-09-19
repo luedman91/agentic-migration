@@ -1,3 +1,20 @@
+/**
+ * ============================================================================
+ * GraphView Component (Interactive Dependency DAG & Tree Engine)
+ * ============================================================================
+ * 
+ * Feature Description:
+ * Implements an interactive D3-powered directed acyclic graph (DAG) visualizer
+ * rendering quantitative finance dependency cones, topological stratifications,
+ * organic dendritic branch corridors, status indicators, and test cones.
+ * 
+ * Use Cases:
+ * 1. Default horizontal (left-to-right) and vertical (top-to-bottom) DAG tree inspection.
+ * 2. Interactive node selection, zoom, pan, and active test tree cone isolation.
+ * 3. Physics stabilization, position caching, and worker concurrency tracking.
+ * ============================================================================
+ */
+
 import { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { Node, NodeKind, NodeStatus, UnitTestResult } from '../types';
@@ -18,17 +35,26 @@ import {
   ShieldCheck,
   Play,
   ArrowDownUp,
-  Scan
+  ArrowLeftRight,
+  Scan,
+  Cpu,
+  Layers
 } from 'lucide-react';
+import { isNodeGreen } from '../utils/dagTestManager';
 
 interface GraphViewProps {
   nodes: Node[];
   onSelect: (node: Node) => void;
   selectedNodeId?: string;
   activeNodeId?: string;
+  activeNodeIds?: string[];
+  workerAssignments?: Record<string, number>;
   viewMode: 'cone' | 'map';
   unitTests?: UnitTestResult[];
+  defaultOrientation?: 'vertical' | 'horizontal';
   onRunTestForNode?: (symbol: string) => void;
+  onRunIntegrationTestForNode?: (node: Node) => void;
+  onOpenWriteIntegrationTest?: (node: Node) => void;
 }
 
 interface SimulationNode extends d3.SimulationNodeDatum {
@@ -44,13 +70,19 @@ interface SimulationNode extends d3.SimulationNodeDatum {
   targetY?: number;
 }
 
-// Color mapping based on status
-const getStatusColor = (status: NodeStatus) => {
+/**
+ * Determines node fill color based on status and integration test verification.
+ * Per specification: ONLY nodes that have an integration test are colored Green (#10b981).
+ * Unit-tested kernels are colored Amber (#f59e0b).
+ */
+const getNodeDisplayColor = (status: NodeStatus, isGreen: boolean) => {
+  if (isGreen) {
+    return '#10b981'; // Emerald: Integration Tested Leaf
+  }
   switch (status) {
     case 'tested':
-      return '#10b981'; // Emerald
     case 'translated':
-      return '#f59e0b'; // Amber
+      return '#f59e0b'; // Amber: Unit Tested Kernel / Translated
     case 'mapped':
       return '#38bdf8'; // Sky
     case 'failed':
@@ -63,14 +95,23 @@ const getStatusColor = (status: NodeStatus) => {
   }
 };
 
+const getStatusColor = (status: NodeStatus) => {
+  return getNodeDisplayColor(status, false);
+};
+
 export default function GraphView({
   nodes,
   onSelect,
   selectedNodeId,
   activeNodeId,
+  activeNodeIds = [],
+  workerAssignments = {},
   viewMode,
   unitTests = [],
+  defaultOrientation,
   onRunTestForNode,
+  onRunIntegrationTestForNode,
+  onOpenWriteIntegrationTest,
 }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -86,10 +127,18 @@ export default function GraphView({
   }>({ nodeGroup: null, link: null, nodesData: [] });
 
   const [kindFilter, setKindFilter] = useState<NodeKind | 'ALL'>('ALL');
-  const [orientation, setOrientation] = useState<'vertical' | 'horizontal'>('vertical'); // Vertical tree layout by default
+  const [orientation, setOrientation] = useState<'vertical' | 'horizontal'>(defaultOrientation || 'horizontal');
   const [hoveredNode, setHoveredNode] = useState<Node | null>(null);
-  const [isLocked, setIsLocked] = useState<boolean>(true); // Pin layout once converged
+  const [isLocked, setIsLocked] = useState<boolean>(false); // Free-floating physics simulation by default per specification
   const [isTestTreeMode, setIsTestTreeMode] = useState<boolean>(true); // Test tree mode active by default
+
+  // Synchronize orientation if caller provides a different defaultOrientation (e.g. Split View vertical default)
+  useEffect(() => {
+    if (defaultOrientation && defaultOrientation !== orientation) {
+      setOrientation(defaultOrientation);
+      persistentPositionsRef.current.clear();
+    }
+  }, [defaultOrientation]);
 
   const filteredNodes = useMemo(() => {
     if (kindFilter === 'ALL') return nodes;
@@ -194,7 +243,7 @@ export default function GraphView({
       .append('marker')
       .attr('id', 'arrow')
       .attr('viewBox', '0 -5 10 10')
-      .attr('refX', orientation === 'vertical' ? 24 : 26)
+      .attr('refX', 21)
       .attr('refY', 0)
       .attr('markerWidth', 6)
       .attr('markerHeight', 6)
@@ -208,7 +257,7 @@ export default function GraphView({
       .append('marker')
       .attr('id', 'arrow-tested')
       .attr('viewBox', '0 -5 10 10')
-      .attr('refX', orientation === 'vertical' ? 24 : 26)
+      .attr('refX', 21)
       .attr('refY', 0)
       .attr('markerWidth', 6)
       .attr('markerHeight', 6)
@@ -222,7 +271,7 @@ export default function GraphView({
       .append('marker')
       .attr('id', 'arrow-warning')
       .attr('viewBox', '0 -5 10 10')
-      .attr('refX', orientation === 'vertical' ? 24 : 26)
+      .attr('refX', 21)
       .attr('refY', 0)
       .attr('markerWidth', 6)
       .attr('markerHeight', 6)
@@ -297,28 +346,29 @@ export default function GraphView({
         d3
           .forceLink(links)
           .id((d: any) => d.id)
-          .distance(viewMode === 'cone' ? 85 : 105)
-          .strength(0.2)
+          .distance(viewMode === 'cone' ? 95 : 120)
+          .strength(0.12)
       )
-      .force('charge', d3.forceManyBody().strength(-140))
-      .force('collision', d3.forceCollide().radius(45))
-      .force('x', d3.forceX((d: any) => d.targetX || width / 2).strength(0.85))
-      .force('y', d3.forceY((d: any) => d.targetY || height / 2).strength(0.85))
+      .force('charge', d3.forceManyBody().strength(-90))
+      .force('collision', d3.forceCollide().radius(42))
+      .force('x', d3.forceX((d: any) => d.targetX || width / 2).strength(0.92))
+      .force('y', d3.forceY((d: any) => d.targetY || height / 2).strength(0.92))
       .alphaDecay(0.06);
 
     simulationRef.current = simulation;
 
-    // Draw Links
+    // Draw Links as Organic Dendritic Tree Branches (Cubic Bézier Paths)
     const link = g
       .append('g')
       .attr('class', 'links')
-      .selectAll('line')
+      .selectAll('path')
       .data(links)
-      .join('line')
-      .attr('stroke', (d) => (d.source.status === 'tested' ? '#059669' : '#334155'))
-      .attr('stroke-width', 1.5)
-      .attr('stroke-dasharray', (d) => (d.source.status === 'tested' ? 'none' : '4 2'))
-      .attr('marker-end', (d) => (d.source.status === 'tested' ? 'url(#arrow-tested)' : 'url(#arrow)'));
+      .join('path')
+      .attr('fill', 'none')
+      .attr('stroke', (d) => (isNodeGreen(d.source, unitTests) ? '#059669' : d.source.status === 'tested' ? '#b45309' : '#334155'))
+      .attr('stroke-width', (d) => (isNodeGreen(d.source, unitTests) ? 2.5 : d.source.status === 'tested' ? 2 : 1.5))
+      .attr('stroke-dasharray', (d) => (isNodeGreen(d.source, unitTests) ? 'none' : '4 2'))
+      .attr('marker-end', (d) => (isNodeGreen(d.source, unitTests) ? 'url(#arrow-tested)' : 'url(#arrow)'));
 
     // Draw Node Groups
     const nodeGroup = g
@@ -375,16 +425,16 @@ export default function GraphView({
       .attr('opacity', 0)
       .attr('pointer-events', 'none');
 
-    // Tested outer glow ring (shown when tested)
+    // Tested outer glow ring (shown ONLY when integration tested green leaf)
     nodeGroup
       .append('circle')
       .attr('class', 'tested-glow-ring')
       .attr('r', 16)
       .attr('fill', 'none')
       .attr('stroke', '#10b981')
-      .attr('stroke-width', 1.5)
+      .attr('stroke-width', 1.8)
       .attr('stroke-dasharray', 'none')
-      .attr('opacity', (d) => (d.status === 'tested' ? 0.7 : 0))
+      .attr('opacity', (d) => (isNodeGreen(d, unitTests) ? 0.8 : 0))
       .attr('pointer-events', 'none');
 
     // Node body circle
@@ -392,7 +442,7 @@ export default function GraphView({
       .append('circle')
       .attr('class', 'body-circle')
       .attr('r', 13)
-      .attr('fill', (d) => getStatusColor(d.status))
+      .attr('fill', (d) => getNodeDisplayColor(d.status, isNodeGreen(d, unitTests)))
       .attr('stroke', '#0f172a')
       .attr('stroke-width', 2)
       .attr('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))');
@@ -405,20 +455,51 @@ export default function GraphView({
       .attr('opacity', 0.8)
       .attr('pointer-events', 'none');
 
+    // Multi-Worker Badge Group (above node)
+    const workerBadgeG = nodeGroup
+      .append('g')
+      .attr('class', 'worker-badge-group')
+      .attr('transform', 'translate(0, -22)')
+      .attr('pointer-events', 'none')
+      .attr('opacity', 0);
+
+    workerBadgeG
+      .append('rect')
+      .attr('class', 'worker-badge-bg')
+      .attr('x', -14)
+      .attr('y', -7)
+      .attr('width', 28)
+      .attr('height', 15)
+      .attr('rx', 4)
+      .attr('fill', '#0284c7')
+      .attr('stroke', '#38bdf8')
+      .attr('stroke-width', 1);
+
+    workerBadgeG
+      .append('text')
+      .attr('class', 'worker-badge-text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', '4px')
+      .attr('fill', '#ffffff')
+      .attr('font-size', '8.5px')
+      .attr('font-family', 'ui-monospace, monospace')
+      .attr('font-weight', 'bold')
+      .text('W1');
+
     // Tested badge icon group in top-right
     const badgeG = nodeGroup
       .append('g')
       .attr('class', 'tested-badge-group')
       .attr('transform', 'translate(10, -10)')
       .attr('pointer-events', 'none')
-      .attr('opacity', (d) => (d.status === 'tested' || isTestTreeMode ? 1 : 0));
+      .attr('opacity', (d) => (isNodeGreen(d, unitTests) || d.status === 'tested' || isTestTreeMode ? 1 : 0));
 
     badgeG
       .append('circle')
       .attr('class', 'tested-badge-bg')
       .attr('r', 7)
-      .attr('fill', (d) => (d.status === 'tested' ? '#065f46' : '#78350f'))
-      .attr('stroke', (d) => (d.status === 'tested' ? '#10b981' : '#f59e0b'))
+      .attr('fill', (d) => (isNodeGreen(d, unitTests) ? '#065f46' : d.status === 'tested' ? '#78350f' : '#1e293b'))
+      .attr('stroke', (d) => (isNodeGreen(d, unitTests) ? '#10b981' : d.status === 'tested' ? '#f59e0b' : '#64748b'))
       .attr('stroke-width', 1.5);
 
     badgeG
@@ -429,7 +510,7 @@ export default function GraphView({
       .attr('fill', '#ffffff')
       .attr('font-size', '8px')
       .attr('font-weight', 'bold')
-      .text((d) => (d.status === 'tested' ? '✓' : '⏳'));
+      .text((d) => (isNodeGreen(d, unitTests) ? '✓' : d.status === 'tested' ? 'λ' : '⏳'));
 
     // Label background pill
     nodeGroup
@@ -441,7 +522,7 @@ export default function GraphView({
       .attr('height', 26)
       .attr('rx', 5)
       .attr('fill', '#020617')
-      .attr('stroke', (d) => (d.status === 'tested' ? '#059669' : '#1e293b'))
+      .attr('stroke', (d) => (isNodeGreen(d, unitTests) ? '#059669' : d.status === 'tested' ? '#b45309' : '#1e293b'))
       .attr('stroke-width', 1)
       .attr('opacity', 0.95)
       .attr('pointer-events', 'none');
@@ -458,18 +539,18 @@ export default function GraphView({
       .attr('font-weight', '600')
       .attr('pointer-events', 'none');
 
-    // Status tag under symbol (e.g. "✓ TESTED" or "TODO")
+    // Status tag under symbol (e.g. "✓ INTEGRATION", "λ UNIT TESTED" or "TODO")
     nodeGroup
       .append('text')
       .attr('class', 'status-tag-text')
       .attr('text-anchor', 'middle')
       .attr('y', 38)
-      .attr('fill', (d) => (d.status === 'tested' ? '#34d399' : '#94a3b8'))
-      .attr('font-size', '7.5px')
+      .attr('fill', (d) => (isNodeGreen(d, unitTests) ? '#34d399' : d.status === 'tested' ? '#fbbf24' : '#94a3b8'))
+      .attr('font-size', '7px')
       .attr('font-family', 'ui-monospace, monospace')
       .attr('font-weight', '700')
       .attr('pointer-events', 'none')
-      .text((d) => (d.status === 'tested' ? '✓ TESTED' : d.status.toUpperCase()));
+      .text((d) => (isNodeGreen(d, unitTests) ? '✓ INTEGRATION' : d.status === 'tested' ? 'λ UNIT TESTED' : d.status.toUpperCase()));
 
     // Hover & Click Events
     nodeGroup
@@ -494,11 +575,26 @@ export default function GraphView({
 
     // Position updates on tick
     simulation.on('tick', () => {
-      link
-        .attr('x1', (d: any) => d.source.x)
-        .attr('y1', (d: any) => d.source.y)
-        .attr('x2', (d: any) => d.target.x)
-        .attr('y2', (d: any) => d.target.y);
+      link.attr('d', (d: any) => {
+        const sx = d.source.x ?? 0;
+        const sy = d.source.y ?? 0;
+        const tx = d.target.x ?? 0;
+        const ty = d.target.y ?? 0;
+
+        if (orientation === 'vertical') {
+          // Vertical tree: curves organically from parent/dependency to child
+          const dy = ty - sy;
+          const cy1 = sy + dy * 0.45;
+          const cy2 = ty - dy * 0.45;
+          return `M ${sx},${sy} C ${sx},${cy1} ${tx},${cy2} ${tx},${ty}`;
+        } else {
+          // Horizontal tree: curves organically left-to-right
+          const dx = tx - sx;
+          const cx1 = sx + dx * 0.45;
+          const cx2 = tx - dx * 0.45;
+          return `M ${sx},${sy} C ${cx1},${sy} ${cx2},${ty} ${tx},${ty}`;
+        }
+      });
 
       nodeGroup.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
 
@@ -520,8 +616,8 @@ export default function GraphView({
       }
     });
 
-    // Auto-fit immediately if large graph (>20 nodes like 150-node enterprise pipeline)
-    if (simNodes.length > 20) {
+    // Auto-fit tree view smoothly on initial load
+    if (simNodes.length > 0) {
       setTimeout(() => {
         if (!svgRef.current || !zoomBehaviorRef.current || !containerRef.current) return;
         const containerWidth = containerRef.current.clientWidth || 800;
@@ -541,7 +637,7 @@ export default function GraphView({
           if (y > maxY) maxY = y;
         });
 
-        const padding = 60;
+        const padding = 70;
         const graphWidth = Math.max(100, maxX - minX + padding * 2);
         const graphHeight = Math.max(100, maxY - minY + padding * 2);
 
@@ -585,15 +681,17 @@ export default function GraphView({
       const currentNode = nodes.find((n) => n.id === d.id);
       if (currentNode) {
         d.status = currentNode.status;
-        d3.select(this)
-          .select('.body-circle')
-          .transition()
-          .duration(200)
-          .attr('fill', getStatusColor(currentNode.status));
       }
 
-      const isTested = d.status === 'tested';
+      const isGreen = isNodeGreen(currentNode || d, unitTests);
+      const isTested = currentNode ? (currentNode.status === 'tested' || currentNode.status === 'translated') : (d.status === 'tested');
       const inActiveTestTree = testTreeSet.size > 0 ? testTreeSet.has(d.id) : true;
+
+      d3.select(this)
+        .select('.body-circle')
+        .transition()
+        .duration(200)
+        .attr('fill', getNodeDisplayColor(currentNode ? currentNode.status : d.status, isGreen));
 
       // Opacity: emphasize test tree when a node is selected
       d3.select(this)
@@ -601,37 +699,54 @@ export default function GraphView({
         .duration(200)
         .attr('opacity', selectedNodeId ? (inActiveTestTree ? 1.0 : isTestTreeMode ? 0.25 : 0.4) : 1.0);
 
-      // Tested outer glow ring
+      // Tested outer glow ring (shown ONLY when green leaf integration tested)
       d3.select(this)
         .select('.tested-glow-ring')
         .transition()
         .duration(200)
-        .attr('opacity', isTested ? 0.7 : 0);
+        .attr('opacity', isGreen ? 0.8 : 0);
 
       // Tested badge icon group in top right
       const badgeG = d3.select(this).select('.tested-badge-group');
-      badgeG.attr('opacity', isTested || isTestTreeMode ? 1 : 0);
+      badgeG.attr('opacity', isGreen || isTested || isTestTreeMode ? 1 : 0);
       badgeG.select('.tested-badge-bg')
-        .attr('fill', isTested ? '#065f46' : '#78350f')
-        .attr('stroke', isTested ? '#10b981' : '#f59e0b');
-      badgeG.select('.tested-badge-text').text(isTested ? '✓' : '⏳');
+        .attr('fill', isGreen ? '#065f46' : isTested ? '#78350f' : '#1e293b')
+        .attr('stroke', isGreen ? '#10b981' : isTested ? '#f59e0b' : '#64748b');
+      badgeG.select('.tested-badge-text').text(isGreen ? '✓' : isTested ? 'λ' : '⏳');
 
       // Status text
       d3.select(this)
         .select('.status-tag-text')
-        .attr('fill', isTested ? '#34d399' : '#94a3b8')
-        .text(isTested ? '✓ TESTED' : d.status.toUpperCase());
+        .attr('fill', isGreen ? '#34d399' : isTested ? '#fbbf24' : '#94a3b8')
+        .text(isGreen ? '✓ INTEGRATION' : isTested ? 'λ UNIT TESTED' : (currentNode ? currentNode.status.toUpperCase() : d.status.toUpperCase()));
 
       // Label background pill border
       d3.select(this)
         .select('.label-bg-pill')
-        .attr('stroke', isTested ? '#059669' : '#1e293b');
+        .attr('stroke', isGreen ? '#059669' : isTested ? '#b45309' : '#1e293b');
 
-      // Active node ring
-      const isActive = d.id === activeNodeId;
+      // Worker badge and active node ring
+      const isActive = (activeNodeIds && activeNodeIds.includes(d.id)) || d.id === activeNodeId;
+      const workerId = workerAssignments?.[d.id] || 1;
+      const workerColors = [
+        { bg: '#0369a1', border: '#38bdf8' }, // W1 Sky
+        { bg: '#047857', border: '#34d399' }, // W2 Emerald
+        { bg: '#6d28d9', border: '#c084fc' }, // W3 Purple
+      ];
+      const colorPreset = workerColors[(workerId - 1) % workerColors.length];
+
+      const workerBadge = d3.select(this).select('.worker-badge-group');
+      if (isActive) {
+        workerBadge.attr('opacity', 1);
+        workerBadge.select('.worker-badge-bg').attr('fill', colorPreset.bg).attr('stroke', colorPreset.border);
+        workerBadge.select('.worker-badge-text').text(`W${workerId}`);
+      } else {
+        workerBadge.attr('opacity', 0);
+      }
+
       const activeRing = d3.select(this).select('.active-ring');
       if (isActive) {
-        activeRing.attr('opacity', 0.9).attr('class', 'active-ring animate-ping');
+        activeRing.attr('opacity', 0.9).attr('class', 'active-ring animate-ping').attr('stroke', colorPreset.border);
       } else {
         activeRing.attr('opacity', 0).attr('class', 'active-ring');
       }
@@ -648,12 +763,14 @@ export default function GraphView({
       .transition()
       .duration(200)
       .attr('stroke', (d: any) => {
-        const sourceStatus = nodes.find((n) => n.id === d.source.id)?.status;
+        const sourceNode = nodes.find((n) => n.id === d.source.id);
+        const sourceIsGreen = sourceNode ? isNodeGreen(sourceNode, unitTests) : false;
+        const sourceIsTested = sourceNode?.status === 'tested' || sourceNode?.status === 'translated';
         const inTree = testTreeSet.has(d.source.id) && testTreeSet.has(d.target.id);
         if (inTree) {
-          return sourceStatus === 'tested' ? '#10b981' : '#f59e0b';
+          return sourceIsGreen ? '#10b981' : sourceIsTested ? '#f59e0b' : '#38bdf8';
         }
-        return sourceStatus === 'tested' ? '#059669' : '#334155';
+        return sourceIsGreen ? '#059669' : sourceIsTested ? '#b45309' : '#334155';
       })
       .attr('stroke-width', (d: any) => {
         const inTree = testTreeSet.has(d.source.id) && testTreeSet.has(d.target.id);
@@ -665,14 +782,16 @@ export default function GraphView({
         return inTree ? 1.0 : 0.15;
       })
       .attr('stroke-dasharray', (d: any) => {
-        const sourceStatus = nodes.find((n) => n.id === d.source.id)?.status;
-        return sourceStatus === 'tested' ? 'none' : '4 2';
+        const sourceNode = nodes.find((n) => n.id === d.source.id);
+        const sourceIsGreen = sourceNode ? isNodeGreen(sourceNode, unitTests) : false;
+        return sourceIsGreen ? 'none' : '4 2';
       })
       .attr('marker-end', (d: any) => {
-        const sourceStatus = nodes.find((n) => n.id === d.source.id)?.status;
-        return sourceStatus === 'tested' ? 'url(#arrow-tested)' : 'url(#arrow)';
+        const sourceNode = nodes.find((n) => n.id === d.source.id);
+        const sourceIsGreen = sourceNode ? isNodeGreen(sourceNode, unitTests) : false;
+        return sourceIsGreen ? 'url(#arrow-tested)' : 'url(#arrow)';
       });
-  }, [nodes, activeNodeId, selectedNodeId, isTestTreeMode]);
+  }, [nodes, activeNodeId, activeNodeIds, workerAssignments, selectedNodeId, isTestTreeMode, unitTests]);
 
   // Toggle layout lock/unlock
   const handleToggleLock = () => {
@@ -778,6 +897,25 @@ export default function GraphView({
     d3.select(svgRef.current).transition().duration(400).call(zoomBehaviorRef.current.transform, transform);
   };
 
+  // Dynamically observe container resizing (e.g., entering Split View or resizing panels)
+  // to ensure graph coordinates remain centered and comfortably bounded.
+  useEffect(() => {
+    if (!containerRef.current) return;
+    let resizeTimer: NodeJS.Timeout | null = null;
+    const observer = new ResizeObserver(() => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        handleFitView();
+      }, 80);
+    });
+
+    observer.observe(containerRef.current);
+    return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      observer.disconnect();
+    };
+  }, [orientation, nodes.length]);
+
   const totalTestedCount = nodes.filter((n) => n.status === 'tested').length;
 
   return (
@@ -827,34 +965,38 @@ export default function GraphView({
 
         <div className="h-4 w-[1px] bg-slate-800 mx-0.5" />
 
-        {/* Orientation Toggle: Vertical (Top-to-Bottom) / Horizontal (Left-to-Right) */}
+        {/* Orientation Toggle: Horizontal (Left-to-Right) / Vertical (Top-to-Bottom) */}
         <button
           onClick={() => {
-            const nextOrientation = orientation === 'vertical' ? 'horizontal' : 'vertical';
+            const nextOrientation = orientation === 'horizontal' ? 'vertical' : 'horizontal';
             setOrientation(nextOrientation);
             persistentPositionsRef.current.clear();
           }}
           className="px-2 py-0.5 rounded text-[11px] font-mono flex items-center gap-1.5 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer border border-slate-700/60 bg-slate-900"
-          title={`Switch to ${orientation === 'vertical' ? 'Horizontal (Left-to-Right)' : 'Vertical (Top-to-Bottom)'} DAG tree view`}
+          title={`Switch to ${orientation === 'horizontal' ? 'Vertical (Top-to-Bottom)' : 'Horizontal (Left-to-Right)'} DAG tree view`}
         >
-          <ArrowDownUp className="w-3 h-3 text-sky-400" />
+          {orientation === 'horizontal' ? (
+            <ArrowLeftRight className="w-3 h-3 text-sky-400" />
+          ) : (
+            <ArrowDownUp className="w-3 h-3 text-sky-400" />
+          )}
           <span className="capitalize">{orientation}</span>
         </button>
 
         <div className="h-4 w-[1px] bg-slate-800 mx-0.5" />
 
-        {/* Layout Stabilizer & Lock Controls */}
+        {/* Layout Stabilizer & Lock Controls (Free by default) */}
         <button
           onClick={handleToggleLock}
           className={`px-2 py-0.5 rounded text-[11px] font-mono flex items-center gap-1 transition-colors cursor-pointer ${
-            isLocked
-              ? 'bg-slate-800 text-slate-200 border border-slate-700 font-semibold'
+            !isLocked
+              ? 'bg-sky-950/80 text-sky-300 border border-sky-700/80 font-semibold shadow-sm'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
           }`}
-          title={isLocked ? 'Layout is locked in stable DAG positions (click to float)' : 'Layout is free-floating (click to lock)'}
+          title={isLocked ? 'Layout is locked in stable DAG positions (click to float freely with spring physics)' : 'Layout is free-floating with organic spring physics (default - click to lock)'}
         >
-          {isLocked ? <Lock className="w-3 h-3 text-sky-400" /> : <Pin className="w-3 h-3 text-slate-400" />}
-          <span>{isLocked ? 'Stable' : 'Free'}</span>
+          {isLocked ? <Lock className="w-3 h-3 text-slate-400" /> : <Sparkles className="w-3 h-3 text-sky-400" />}
+          <span>{isLocked ? 'Stable' : 'Free (Default)'}</span>
         </button>
 
         <button
@@ -865,6 +1007,41 @@ export default function GraphView({
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* Live Active Parallel Workers HUD Banner */}
+      {activeNodeIds && activeNodeIds.length > 0 && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-slate-900/95 border border-sky-500/60 shadow-2xl rounded-full px-3.5 py-1.5 backdrop-blur font-mono text-xs animate-in fade-in zoom-in-95">
+          <div className="flex items-center gap-1.5 text-sky-400 font-bold">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+            </span>
+            <span>Workers Active ({activeNodeIds.length})</span>
+          </div>
+          <div className="h-3 w-[1px] bg-slate-700 mx-0.5" />
+          <div className="flex items-center gap-1.5">
+            {activeNodeIds.map((nodeId) => {
+              const activeNode = nodes.find((n) => n.id === nodeId);
+              const workerId = workerAssignments?.[nodeId] || 1;
+              const workerColors = [
+                { bg: 'bg-sky-950/80', text: 'text-sky-300', border: 'border-sky-500/80', badge: 'bg-sky-600' },
+                { bg: 'bg-emerald-950/80', text: 'text-emerald-300', border: 'border-emerald-500/80', badge: 'bg-emerald-600' },
+                { bg: 'bg-purple-950/80', text: 'text-purple-300', border: 'border-purple-500/80', badge: 'bg-purple-600' },
+              ];
+              const c = workerColors[(workerId - 1) % workerColors.length];
+              return (
+                <div
+                  key={nodeId}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${c.bg} ${c.border} ${c.text} text-[11px]`}
+                >
+                  <span className={`px-1 rounded text-[9px] font-bold text-white ${c.badge}`}>W{workerId}</span>
+                  <span className="font-semibold truncate max-w-[110px]">{activeNode?.ql_symbol || nodeId}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Floating Zoom Controls */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-1 bg-slate-900/90 backdrop-blur p-1 rounded-lg border border-slate-800 shadow-xl text-xs">
@@ -930,36 +1107,85 @@ export default function GraphView({
               />
             </div>
 
-            {activeTestTree.isFullyTested ? (
-              <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-sans">
-                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                <span>All prerequisite nodes tested. Ready for integration test.</span>
+            {/* Green Leaf or Integration Status */}
+            {isNodeGreen(selectedNode, unitTests) ? (
+              <div className="p-2 rounded-lg bg-emerald-950/60 border border-emerald-800/80 flex items-center gap-2 text-[11px] text-emerald-300">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  <strong>Green Leaf Verified:</strong> Integration test passed with full Autograd risk matrix parity.
+                </span>
               </div>
             ) : (
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-[11px] text-amber-400 font-sans">
-                  <Clock className="w-3.5 h-3.5 shrink-0" />
-                  <span>{activeTestTree.untested.length} untested prerequisite node(s):</span>
-                </div>
-                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                  {activeTestTree.untested.map((un) => (
-                    <div
-                      key={un.id}
-                      className="px-1.5 py-0.5 rounded bg-amber-950/60 border border-amber-800/80 text-[10px] text-amber-300 flex items-center gap-1"
-                    >
-                      <span className="truncate max-w-[120px]">{un.ql_symbol}</span>
-                      {onRunTestForNode && (
-                        <button
-                          onClick={() => onRunTestForNode(un.ql_symbol)}
-                          className="text-[9px] bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold px-1 rounded cursor-pointer"
-                          title="Run unit test now"
+              <div className="space-y-2">
+                {activeTestTree.isFullyTested ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-sans">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>All prerequisite nodes tested. Ready for integration test.</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[11px] text-amber-400 font-sans">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>{activeTestTree.untested.length} untested prerequisite node(s):</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                      {activeTestTree.untested.map((un) => (
+                        <div
+                          key={un.id}
+                          className="px-1.5 py-0.5 rounded bg-amber-950/60 border border-amber-800/80 text-[10px] text-amber-300 flex items-center gap-1"
                         >
-                          Test
+                          <span className="truncate max-w-[120px]">{un.ql_symbol}</span>
+                          {onRunTestForNode && (
+                            <button
+                              onClick={() => onRunTestForNode(un.ql_symbol)}
+                              className="text-[9px] bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold px-1 rounded cursor-pointer"
+                              title="Run unit test now"
+                            >
+                              Test
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Integration Tests From Green Nodes */}
+                {(() => {
+                  const greenPrereqs = activeTestTree.treeNodes.filter(
+                    (n) => n.id !== selectedNode.id && isNodeGreen(n, unitTests)
+                  );
+                  return (
+                    <div className="pt-2 border-t border-slate-800 space-y-1.5">
+                      {greenPrereqs.length > 0 && (
+                        <div className="text-[10px] text-emerald-400 flex items-center justify-between">
+                          <span className="flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-emerald-400" /> Green Checkpoints:
+                          </span>
+                          <span className="font-bold">{greenPrereqs.map((g) => g.ql_symbol).join(', ')}</span>
+                        </div>
+                      )}
+                      {onRunIntegrationTestForNode && (
+                        <button
+                          onClick={() => onRunIntegrationTestForNode(selectedNode)}
+                          className="w-full py-1.5 px-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 shadow cursor-pointer transition-all active:scale-[0.98]"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Run Integration Test {greenPrereqs.length > 0 ? '(From Green Checkpoints)' : ''}</span>
+                        </button>
+                      )}
+                      {onOpenWriteIntegrationTest && (
+                        <button
+                          onClick={() => onOpenWriteIntegrationTest(selectedNode)}
+                          className="w-full py-1 px-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <ShieldCheck className="w-3 h-3 text-purple-400" />
+                          <span>Author Custom Integration Test</span>
                         </button>
                       )}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -974,8 +1200,8 @@ export default function GraphView({
           <div className="mt-1 flex items-center justify-between text-[10px]">
             <span>
               Status:{' '}
-              <strong className={hoveredNode.status === 'tested' ? 'text-emerald-400 uppercase' : 'text-slate-200 uppercase'}>
-                {hoveredNode.status === 'tested' ? '✓ TESTED' : hoveredNode.status}
+              <strong className={isNodeGreen(hoveredNode, unitTests) ? 'text-emerald-400 uppercase font-bold' : hoveredNode.status === 'tested' ? 'text-amber-400 uppercase' : 'text-slate-200 uppercase'}>
+                {isNodeGreen(hoveredNode, unitTests) ? '✓ GREEN LEAF (INTEGRATION TESTED)' : hoveredNode.status === 'tested' ? 'λ UNIT TESTED' : hoveredNode.status}
               </strong>
             </span>
             <span>Kind: <strong className="text-cyan-400">{hoveredNode.kind}</strong></span>
@@ -985,24 +1211,28 @@ export default function GraphView({
       )}
 
       {/* Status Legend at bottom */}
-      <div className="absolute bottom-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400 bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800/80">
+      <div className="absolute bottom-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400 bg-slate-900/85 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800/80">
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-slate-500 font-semibold">DAG TEST TREE:</span>
           <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> ✓ Tested Node
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/40"></span> ✓ Green Leaf (Integration Tested)
           </span>
-          <span className="flex items-center gap-1.5 text-amber-300">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span> ⏳ Untested Prerequisite
+          <span className="flex items-center gap-1.5 text-amber-400 font-semibold">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span> λ Unit Tested Kernel
           </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-sky-400"></span> AST Mapped
+          <span className="flex items-center gap-1.5 text-sky-400">
+            <span className="w-2.5 h-2.5 rounded-full bg-sky-400"></span> AST Mapped IR
           </span>
-          <span className="flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5 text-slate-400">
             <span className="w-2.5 h-2.5 rounded-full bg-slate-500"></span> Pending Todo
+          </span>
+          <span className="flex items-center gap-1 text-slate-500 border-l border-slate-800 pl-2">
+            <Cpu className="w-3 h-3 text-sky-400" />
+            <span className="text-sky-300 font-bold">W1-W3</span> Parallel Workers
           </span>
         </div>
         <div className="hidden sm:block text-slate-500 text-[10px]">
-          Select any node to highlight its upstream Test Tree & write integration tests
+          Only integration-tested leaves are colored green • Trigger tests from green checkpoints
         </div>
       </div>
     </div>

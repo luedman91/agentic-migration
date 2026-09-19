@@ -73,7 +73,7 @@ describe('useFileManager Hook', () => {
 
     const synced = result.current.files.find((f) => f.nodeId === 'node-norm');
     expect(synced).toBeDefined();
-    expect(synced?.path).toBe('torch_quantlib/math/cumulativenormaldistribution.py');
+    expect(synced?.path).toBe('torch_quantlib/math/cumulative_normal_distribution.py');
     expect(synced?.content).toContain('CumulativeNormalDistribution');
   });
 

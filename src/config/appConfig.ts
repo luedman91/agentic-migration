@@ -67,19 +67,21 @@ export const MODAL_CLOUD_CONFIG = {
  * Default Project Configuration Baseline
  */
 export const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
-  repoUrl: 'https://github.com/uber/athenadriver.git',
-  branch: 'main',
-  entryPoint: 'src/orchestrator/system_coordinator.cpp',
+  repoUrl: 'https://github.com/lballabio/QuantLib.git',
+  branch: 'v1.34.0',
+  entryPoint: 'ql/pricingengines/vanilla/analyticeuropeanengine.cpp',
   sourceLanguage: 'C++',
   targetLanguage: 'Python',
-  targetFramework: 'PyTorch',
+  targetFramework: 'pytorch',
   targetDevice: 'cuda',
   precision: 'float64',
-  sourceLibraryName: 'Athena Engine + QuantLib Core (C++)',
-  targetLibraryName: 'py_enterprise_distributed_engine',
+  sourceLibraryName: 'QuantLib C++',
+  targetLibraryName: 'torch_quantlib',
   oracleEngine: 'C++ Simulation Reference & Modal Oracle',
   executionMode: 'modal',
-  presetId: 'massive_enterprise_150_dag',
+  presetId: 'deep_distributed_pipeline',
+  numericalTolerance: '1e-5',
+  otherInstructions: 'numerical diff tolerance should be 1e-5\nvectorize inner mathematical loops with batched PyTorch tensor operations\npreserve original C++ docstrings and mathematical LaTeX comments\nstrictly annotate all function signatures with Python 3.11 type hints\nexport canonical symbol aliases (e.g. GaussianErrorFunction = ErrorFunction)',
 };
 
 /**

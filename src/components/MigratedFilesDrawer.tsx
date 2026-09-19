@@ -166,8 +166,16 @@ function MigratedFilesDrawerContent({
     torch_quantlib: true,
     'torch_quantlib/math': true,
     'torch_quantlib/pricingengines': true,
-    'torch_quantlib/tests': true,
-    'torch_quantlib/tests/integration': true,
+    'torch_quantlib/termstructures': true,
+    'torch_quantlib/time': true,
+    'torch_quantlib/api': true,
+    tests: true,
+    'tests/math': true,
+    'tests/pricingengines': true,
+    'tests/termstructures': true,
+    'tests/time': true,
+    'tests/api': true,
+    'tests/integration': true,
     examples: true,
   });
 

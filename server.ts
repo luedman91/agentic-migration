@@ -26,6 +26,7 @@ import {
   resetBuildingBlocks,
   analyzeFunctionDeterministic,
   runAgenticMigration,
+  discoverGraphFromSource,
 } from "./server/agent";
 import { dispatchModalMigration, checkModalStatus } from "./server/modalEngine";
 import { logFunctionCall, logError, getRecentServerLogs } from "./server/logger";
@@ -153,6 +154,23 @@ async function startServer(): Promise<void> {
       });
     } catch (err: any) {
       logError("server", "POST /api/agent/migrate-node failed", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // POST Dynamic Graph Discovery (Graph Agent discovers DAG from arbitrary C++ entry point or code)
+  app.post("/api/agent/discover-graph", async (req, res) => {
+    logFunctionCall("server", "POST /api/agent/discover-graph", { entryPoint: req.body?.entryPoint });
+    try {
+      const {
+        entryPoint = "ql/pricingengines/vanilla/analytichestonengine.cpp",
+        sourceCode = "",
+        targetPackageName = "torch_quantlib",
+      } = req.body || {};
+      const discovered = await discoverGraphFromSource(entryPoint, sourceCode, targetPackageName);
+      res.json({ success: true, ...discovered });
+    } catch (err: any) {
+      logError("server", "POST /api/agent/discover-graph failed", err);
       res.status(500).json({ success: false, error: err.message });
     }
   });

@@ -72,6 +72,9 @@ describe('Modal Serverless Cloud Client', () => {
     expect(result.gpuAllocated).toBe('NVIDIA A10G');
     expect(result.parallelSpeedup).toBe(65.2);
     expect(result.files.length).toBe(2);
+    expect(result.files[0].path).toContain('torch_quantlib/');
+    expect(result.files[0].path).not.toContain('py_distributed');
+    expect(result.files[1].path).toContain('tests/');
     expect(result.unitTest.category).toBe('target_library');
     expect(result.unitTest.shippable).toBe(true);
   });

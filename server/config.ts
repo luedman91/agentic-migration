@@ -14,6 +14,12 @@
  * ============================================================================
  */
 
+import dotenv from "dotenv";
+
+// Load environment variables from .env and .env.example fallback
+dotenv.config();
+dotenv.config({ path: ".env.example" });
+
 export const SERVER_CONFIG = {
   /** Network port binding (must strictly be 3000 in this sandboxed environment) */
   PORT: 3000,

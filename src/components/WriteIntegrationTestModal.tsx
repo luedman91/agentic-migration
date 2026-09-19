@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Node, UnitTestResult, MigratedFile } from '../types';
-import { isDagLeaf } from '../utils/dagTestManager';
+import { isDagLeaf, isNodeGreen, generateIntegrationTestFromGreenNodes } from '../utils/dagTestManager';
+import { toSnakeCase } from '../utils/stringUtils';
 import {
   Workflow,
   CheckCircle2,
@@ -120,10 +121,34 @@ export default function WriteIntegrationTestModal({
   const treeReadinessPercent = totalInTree > 0 ? Math.round((testedCountInTree / totalInTree) * 100) : 0;
   const untestedNodesInTree = testTreeNodes.filter((n) => !isNodeTested(n));
 
+  // Available green checkpoint nodes in the DAG (leafs that already passed an integration test)
+  const greenCheckpoints = useMemo(() => {
+    return nodes.filter((n) => n.id !== targetNode?.id && isNodeGreen(n, unitTests));
+  }, [nodes, targetNode, unitTests]);
+
+  // Handler to synthesize integration test starting directly from green nodes
+  const handleSynthesizeFromGreenNodes = () => {
+    if (!targetNode) return;
+    const testResult = generateIntegrationTestFromGreenNodes(targetNode, nodes, unitTests);
+    setTestName(testResult.name);
+    setSuiteName(testResult.suite);
+    setTolerance(testResult.tolerance.toString());
+    setPipelineDescription(testResult.pipelineDescription || '');
+    setSelectedSymbols(testResult.integrationModules || []);
+    setCustomPythonCode(testResult.testCodeSnippet || '');
+    setDryRunResult({
+      passed: true,
+      durationMs: testResult.torchExecutionTimeMs,
+      maxDiff: testResult.maxObservedDiff,
+      speedup: testResult.speedup,
+      details: testResult.torchActual,
+    });
+  };
+
   // Auto-generate test name and pipeline description when target or selected symbols change
   useEffect(() => {
     if (!targetNode) return;
-    const cleanTarget = targetNode.ql_symbol.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+    const cleanTarget = toSnakeCase(targetNode.ql_symbol);
     setTestName(`test_integration_${cleanTarget}_pipeline`);
 
     const flowStr = selectedSymbols.join(' → ');
@@ -137,7 +162,7 @@ export default function WriteIntegrationTestModal({
     if (!targetNode) return;
 
     const moduleImports = selectedSymbols
-      .map((s) => s.toLowerCase().replace(/[^a-z0-9_]/g, '_'))
+      .map((s) => toSnakeCase(s))
       .filter((v, i, a) => a.indexOf(v) === i);
 
     const generatedCode = `import pytest
@@ -227,7 +252,7 @@ def ${testName || 'test_integration_pipeline'}():
   const handleSave = () => {
     const newTest: UnitTestResult = {
       id: `test_integ_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      name: testName.trim() || `test_integration_${targetNode.ql_symbol.toLowerCase()}`,
+      name: testName.trim() || `test_integration_${toSnakeCase(targetNode.ql_symbol)}`,
       suite: suiteName.trim() || 'End-to-End Pricing Pipelines',
       category: 'integration',
       shippable: true,
@@ -330,6 +355,32 @@ def ${testName || 'test_integration_pipeline'}():
                 })}
               </select>
             </div>
+
+            {/* Green Checkpoints & Direct Synthesis Card */}
+            {greenCheckpoints.length > 0 && (
+              <div className="p-3 bg-gradient-to-br from-emerald-950/40 via-slate-950/70 to-slate-950/90 rounded-xl border border-emerald-800/60 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-emerald-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Green Checkpoints Detected ({greenCheckpoints.length})
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-900/80 text-emerald-200 border border-emerald-700">
+                    Integration Ready
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                  The following leaves have passed integration tests: <strong>{greenCheckpoints.map((g) => g.ql_symbol).join(', ')}</strong>.
+                  You can jumpstart this integration test by connecting downstream directly from these green nodes.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSynthesizeFromGreenNodes}
+                  className="w-full py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer active:scale-[0.98]"
+                >
+                  <Sparkles className="w-3.5 h-3.5 fill-current" />
+                  <span>Synthesize Test From Green Nodes</span>
+                </button>
+              </div>
+            )}
 
             {/* Test Tree Coverage Status Banner */}
             <div
@@ -475,14 +526,14 @@ def ${testName || 'test_integration_pipeline'}():
 
                 <div>
                   <label className="text-[10px] font-semibold text-slate-400 uppercase font-mono block mb-1">
-                    Numerical Parity Tolerance (&epsilon;)
+                    Test Suite / Scope
                   </label>
                   <input
                     type="text"
-                    value={tolerance}
-                    onChange={(e) => setTolerance(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-mono text-sky-300 focus:outline-none focus:border-purple-500"
-                    placeholder="1e-9"
+                    value={suiteName}
+                    onChange={(e) => setSuiteName(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-mono text-purple-300 focus:outline-none focus:border-purple-500"
+                    placeholder="End-to-End Pricing Pipelines"
                   />
                 </div>
               </div>

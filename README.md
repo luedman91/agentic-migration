@@ -7,6 +7,8 @@
 [![Pydantic](https://img.shields.io/badge/Pydantic-Schema_Validation-e92063.svg)](https://docs.pydantic.dev/)
 [![Vitest](https://img.shields.io/badge/Tests-Passed-brightgreen.svg)](https://vitest.dev/)
 
+![Workbench topological DAG of a 306-node migration, with leaf nodes marked tested](docs/workbench-dag.jpg)
+
 ---
 
 ## 1. Executive Summary & General-Purpose Architecture
